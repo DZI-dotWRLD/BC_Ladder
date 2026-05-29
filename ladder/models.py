@@ -3,6 +3,25 @@ from django.db import models
 
 
 
+
+
+class Team(models.Model):
+    DIVISION_MENS = "mens"
+    DIVISION_WOMENS = 'womens'
+
+    DIVISION_CHOICES = [
+        (DIVISION_MENS,"Men's"),
+        (DIVISION_WOMENS, "Women's"),
+    ]
+
+    name = models.CharField(max_length=50)
+    division = models.CharField(max_length=20, choices=DIVISION_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+    
+
 # Player profile class
 
 class PlayerProfile(models.Model):
@@ -20,7 +39,17 @@ class PlayerProfile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    team = models.ForeignKey(
+        Team,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="players"
+    )
+
 
     def __str__(self):
         return f"{self.user.username} profile"
+
+
 
