@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import PlayerProfile, Team, LadderStanding
+from .models import PlayerProfile, Team, LadderStanding, AvailabilitySlot
 
 
 class PlayerProfileInline(admin.TabularInline):
@@ -20,7 +20,19 @@ class LadderStandingAdmin(admin.ModelAdmin):
     ordering = ("position",)
 
 
+class AvailabilitySlotAdmin(admin.ModelAdmin):
+    list_display = (
+        "player",
+        "week_start_date",
+        "day_of_week",
+        "start_time",
+        "end_time",
+        "created_at",
+    )
+    ordering = ("week_start_date", "day_of_week", "start_time")
+
 
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
 admin.site.register(Team, TeamAdmin)
 admin.site.register(LadderStanding,LadderStandingAdmin)
+admin.site.register(AvailabilitySlot, AvailabilitySlotAdmin)

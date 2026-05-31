@@ -97,3 +97,58 @@ class LadderStanding(models.Model):
 
     def __str__(self):
         return f"{self.position}. {self.team.name}"
+    
+
+
+class AvailabilitySlot(models.Model):
+
+    class DayOfWeek(models.TextChoices):
+        MONDAY = "monday", "Monday"
+        TUESDAY = "tuesday", "Tuesday"
+        WEDNESDAY = "wednesday", "Wednesday"
+        THURSDAY = "thursday", "Thursday"
+        FRIDAY = "friday", "Friday"
+        SATURDAY = "saturday", "Saturday"
+        SUNDAY = "sunday", "Sunday"
+
+
+    player = models.ForeignKey(PlayerProfile, on_delete=models.CASCADE, related_name="availability_slots")
+
+    week_start_date = models.DateField()
+    
+    day_of_week = models.CharField(max_length=10, choices=DayOfWeek.choices,)
+
+    start_time = models.TimeField()
+
+    end_time = models.TimeField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "player",
+                    "week_start_date",
+                    "day_of_week",
+                    "start_time",
+                    "end_time", 
+                ],
+                name="unique_player_availability_slot"
+            )
+        ]
+
+
+    def clean(self):
+        super().clean()
+
+        if self.start_time >= self.end_time:
+            raise ValidationError("Start time should be before end time")
+        
+
+
+    def __str__(self):
+        return (f"{self.player.user.username} - "
+                f"{self.get_day_of_week_display()} "
+                f"{self.start_time}-{self.end_time}"
+                )
