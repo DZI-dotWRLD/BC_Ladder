@@ -74,6 +74,26 @@ class PlayerProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} profile"
+    
 
+class LadderStanding(models.Model):
 
+    team = models.OneToOneField(
+        Team,
+        on_delete=models.CASCADE,
+        related_name="standing")
+    
+    position = models.PositiveIntegerField()
 
+    matches_played = models.PositiveIntegerField(default=0)
+
+    wins = models.PositiveIntegerField(default=0)
+
+    losses = models.PositiveIntegerField(default=0)
+
+    points = models.IntegerField(default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.position}. {self.team.name}"
