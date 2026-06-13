@@ -3,6 +3,7 @@ from itertools import combinations
 
 from .models import PlayerProfile, Team
 
+
 def get_team_players(team: Team):
     """Return all player profiles assigned to the given team."""
     return team.players.all()
@@ -33,9 +34,7 @@ def get_team_pair_availability(team: Team, week_start_date):
     result_list = []
     team_pairs = get_player_pairs(team)
 
-    for pair in team_pairs:
-        player_one = pair[0]
-        player_two = pair[1]
+    for player_one, player_two in team_pairs:
         matching_slots = get_pair_matching_slots(player_one, player_two, week_start_date)
         if matching_slots:
             result_list.append(
@@ -52,7 +51,7 @@ def get_slot_key(slot):
     return (slot.day_of_week, slot.start_time, slot.end_time)
 
 
-def find_team_match_options(team_a, team_b, week_start_date):
+def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
     match_options = []
     team_a_availability = get_team_pair_availability(team_a, week_start_date)
     team_b_availability = get_team_pair_availability(team_b, week_start_date)
@@ -64,7 +63,7 @@ def find_team_match_options(team_a, team_b, week_start_date):
 
     for team_a_pair_availability in team_a_availability:
         for team_a_slot in team_a_pair_availability["slots"]:
-            matching_team_b_pairs = team_b_pairs_by_slot[get_slot_key(team_a_slot)]
+            matching_team_b_pairs = team_b_pairs_by_slot.get(get_slot_key(team_a_slot), [])
             for team_b_players in matching_team_b_pairs:
                 match_options.append(
                     {
