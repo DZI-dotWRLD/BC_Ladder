@@ -261,4 +261,43 @@ class Match(models.Model):
                 raise ValidationError("Teams must be in the same division.")
 
         if self.scheduled_start_time >= self.scheduled_end_time:
-            raise ValidationError("Scheduled start time must be before proposed end time.")
+            raise ValidationError("Scheduled start time must be before scheduled end time.")
+        
+    def __str__(self):
+        return (
+            f"{self.team_a} vs {self.team_b} - "
+            f"{self.get_scheduled_day_of_week_display()} "
+            f"{self.scheduled_start_time}-{self.scheduled_end_time}"
+        )
+        
+
+
+class MatchResultSubmission(models.Model):
+    match = models.ForeignKey(Match,
+                              on_delete=models.CASCADE,
+                              related_name="result_submissions",
+                              )
+    submitting_team = models.ForeignKey(Team, 
+                                        on_delete=models.CASCADE)
+    team_a_sets_won = models.PositiveIntegerField()
+    team_b_sets_won = models.PositiveIntegerField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["match", "submitting_team"],
+                 name="unique_result_submission_per_team_per_match",
+            )
+        ]
+
+    def clean(self):
+        super().clean()
+
+        if self.match_id and self.submitting_team_id:
+            valid_team_ids = [self.match.team_a_id, self.match.team_b_id]
+
+            if self.submitting_team_id not in valid_team_ids:
+                raise ValidationError("Submitting team must be one of the match teams.")

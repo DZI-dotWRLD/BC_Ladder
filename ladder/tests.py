@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
-from .models import AvailabilitySlot, Challenge, PlayerProfile, Team, Match
+from .models import AvailabilitySlot, Challenge, PlayerProfile, Team, Match, MatchResultSubmission
 from .services import (
     find_team_match_options,
     get_pair_matching_slots,
@@ -460,3 +460,85 @@ class MatchModelTests(TestCase):
             match.full_clean()
 
 
+
+class MatchResultSubmissionTests(TestCase):
+
+    def setUp(self):
+        self.week_start_date = date(2026, 6, 1)
+        self.team_a = Team.objects.create(
+            name="Team A",
+            division=Team.DIVISION_MENS,
+        )
+        self.team_b = Team.objects.create(
+            name="Team B",
+            division=Team.DIVISION_MENS,
+        )
+        self.outside_team = Team.objects.create(
+            name="Outside Team",
+            division=Team.DIVISION_MENS,
+        )
+        
+        self.match = Match.objects.create(
+            team_a = self.team_a,
+            team_b = self.team_b,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(19, 0),
+        )   
+
+    def test_result_submission_can_be_created_by_team_a(self):
+        submission = MatchResultSubmission(
+            match = self.match,
+            submitting_team = self.team_a,
+            team_a_sets_won = 2,
+            team_b_sets_won = 1,
+
+        )
+
+        submission.full_clean()
+
+    def test_result_submission_can_be_created_by_team_b(self):
+        submission = MatchResultSubmission(
+            match = self.match,
+            submitting_team = self.team_b,
+            team_a_sets_won = 2,
+            team_b_sets_won = 1,
+
+        )
+
+        submission.full_clean()
+
+    def test_result_submission_rejects_team_not_in_match(self):
+        submission = MatchResultSubmission(
+            match = self.match,
+            submitting_team = self.outside_team,
+            team_a_sets_won = 2,
+            team_b_sets_won = 1,
+
+        )
+
+        with self.assertRaises(ValidationError):
+            submission.full_clean()
+
+
+    def test_same_team_cannot_submit_twice_for_same_match(self):
+        MatchResultSubmission.objects.create(
+            match= self.match,
+            submitting_team = self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        duplicate_submission = MatchResultSubmission(
+            match = self.match,
+            submitting_team = self.team_a,
+            team_a_sets_won = 2,
+            team_b_sets_won = 1,
+
+        )
+
+
+
+        with self.assertRaises(ValidationError):
+            duplicate_submission.full_clean()
