@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
-from .models import AvailabilitySlot, Challenge, PlayerProfile, Team
+from .models import AvailabilitySlot, Challenge, PlayerProfile, Team, Match
 from .services import (
     find_team_match_options,
     get_pair_matching_slots,
@@ -380,3 +380,83 @@ class ChallengeModelTests(TestCase):
 
         with self.assertRaises(ValidationError):
             challenge.full_clean()
+
+
+class MatchModelTests(TestCase):
+    def setUp(self):
+        self.week_start_date = date(2026, 6, 1)
+        self.team_a = Team.objects.create(name="Challenge Team A", division=Team.DIVISION_MENS)
+        self.team_b = Team.objects.create(name="Challenge Team B", division=Team.DIVISION_MENS)
+        self.womens_team = Team.objects.create(
+            name="Challenge Women's Team",
+            division=Team.DIVISION_WOMENS,
+        )
+
+    def test_match_can_be_created_for_two_teams_in_same_division(self):
+        match = Match(
+            team_a=self.team_a,
+            team_b=self.team_b,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(19, 0),
+        )
+
+        match.full_clean()
+        
+
+        self.assertEqual(match.status, Match.STATUS_SCHEDULED)
+
+    def test_match_team_cannot_play_itself(self):
+        match = Match(
+            team_a=self.team_a,
+            team_b=self.team_a,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+           scheduled_end_time=time(19, 0),
+        )
+
+        with self.assertRaises(ValidationError):
+            match.full_clean()
+
+    def test_match_teams_must_be_in_same_division(self):
+        match = Match(
+            team_a=self.team_a,
+            team_b=self.womens_team,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(19, 0),
+        )
+
+        with self.assertRaises(ValidationError):
+            match.full_clean()
+
+    def test_match_start_time_must_be_before_end_time(self):
+        match = Match(
+            team_a = self.team_a,
+            team_b=self.team_b,
+            scheduled_week_start_date = self.week_start_date,
+            scheduled_day_of_week = AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(19, 0),
+            scheduled_end_time=time(18, 0),
+        )
+
+        with self.assertRaises(ValidationError):
+            match.full_clean()
+
+    def test_match_start_time_must_be_not_equal_end_time(self):
+        match = Match(
+            team_a = self.team_a,
+            team_b=self.team_b,
+            scheduled_week_start_date = self.week_start_date,
+            scheduled_day_of_week = AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(18, 0),
+        )
+
+        with self.assertRaises(ValidationError):
+            match.full_clean()
+
+

@@ -209,3 +209,56 @@ class Challenge(models.Model):
             f"{self.get_proposed_day_of_week_display()} "
             f"{self.proposed_start_time}-{self.proposed_end_time}"
         )
+
+
+
+
+class Match(models.Model):
+
+    STATUS_SCHEDULED = "scheduled"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+    
+
+    STATUS_CHOICES = [
+        (STATUS_SCHEDULED, "Scheduled"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
+    team_a = models.ForeignKey(Team,
+                               related_name="team_a",
+                               on_delete=models.CASCADE,
+                               )
+    team_b = models.ForeignKey(Team,
+                               related_name="team_b",
+                               on_delete=models.CASCADE,
+                               )
+    scheduled_week_start_date = models.DateField()
+    
+    scheduled_day_of_week = models.CharField(max_length=20,
+                                 choices=AvailabilitySlot.DayOfWeek.choices,
+                                 )
+    scheduled_start_time = models.TimeField()
+    scheduled_end_time = models.TimeField()
+
+    status = models.CharField(max_length=30,
+                              choices=STATUS_CHOICES,
+                              default=STATUS_SCHEDULED,
+                               )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        super().clean()
+
+        if self.team_a_id and self.team_b_id:
+            if self.team_a_id == self.team_b_id:
+                raise ValidationError("A team cannot play itself.")
+
+            if self.team_a.division != self.team_b.division:
+                raise ValidationError("Teams must be in the same division.")
+
+        if self.scheduled_start_time >= self.scheduled_end_time:
+            raise ValidationError("Scheduled start time must be before proposed end time.")
