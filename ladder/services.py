@@ -1,9 +1,9 @@
 from collections import defaultdict
 from itertools import combinations
 
-from .models import PlayerProfile, Team
+from .models import PlayerProfile, Team, Match
 
-
+#creating pairs in one team, find avability and offer match
 def get_team_players(team: Team):
     """Return all player profiles assigned to the given team."""
     return team.players.all()
@@ -74,4 +74,36 @@ def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
                 )
 
     return match_options
+
+
+#Match Result confirmation logic 
+
+#Has anyone submitted?
+def get_submissions(match: Match):
+    return match.result_submissions.all()
+
+#Have both teams submitted?
+#def both_teams_submitted(match):
+#    submissions = get_submissions(match)
+#    return submissions.count() == 2
+
+def submissions_match(submission_one, submission_two):
+    return (
+        submission_one.team_a_sets_won == submission_two.team_a_sets_won
+        and submission_one.team_b_sets_won == submission_two.team_b_sets_won
+    )
+
+#Do both submissions agree?
+def get_match_status(match):
+    submissions = list(get_submissions(match))
+
+    if len(submissions) < 2:
+         return "waiting_for_submissions"
+    if submissions_match(submissions[0],submissions[1]):
+        return "confirmed"
+    else:
+        return "conflict"
+    
+
+
 
