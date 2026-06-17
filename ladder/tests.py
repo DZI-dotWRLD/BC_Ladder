@@ -11,6 +11,9 @@ from .services import (
     get_pair_matching_slots,
     get_player_pairs,
     get_team_pair_availability,
+    get_submissions,
+    submissions_match,
+    get_match_status
 )
 
 
@@ -542,3 +545,77 @@ class MatchResultSubmissionTests(TestCase):
 
         with self.assertRaises(ValidationError):
             duplicate_submission.full_clean()
+
+
+class MatchResultStatusServiceTests(TestCase):
+    def setUp(self):
+        self.week_start_date = date(2026, 6, 1)
+        self.team_a = Team.objects.create(
+            name="Team A",
+            division=Team.DIVISION_MENS,
+        )
+        self.team_b = Team.objects.create(
+            name="Team B",
+            division=Team.DIVISION_MENS,
+        )
+
+        self.match = Match.objects.create(
+            team_a = self.team_a,
+            team_b = self.team_b,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(19, 0),
+        )
+
+    def test_match_result_status_waiting_when_less_than_two_submissions(self):
+        MatchResultSubmission.objects.create(
+            match = self.match,
+            submitting_team = self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+
+        )
+
+        status = get_match_status(self.match)
+
+        self.assertEqual(status, "waiting_for_submissions")
+
+
+    def test_match_result_status_confirmed_when_submissions_match(self):
+        MatchResultSubmission.objects.create(
+            match = self.match,
+            submitting_team = self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+
+        )
+        MatchResultSubmission.objects.create(
+            match = self.match,
+            submitting_team = self.team_b,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        status = get_match_status(self.match)
+
+        self.assertEqual(status, "confirmed")
+    
+    def test_match_result_status_conflict_when_submissions_disagree(self):
+        MatchResultSubmission.objects.create(
+            match = self.match,
+            submitting_team = self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        MatchResultSubmission.objects.create(
+            match = self.match,
+            submitting_team = self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+
+        status = get_match_status(self.match)
+
+        self.assertEqual(status, "conflict")

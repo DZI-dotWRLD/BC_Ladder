@@ -101,8 +101,8 @@ def get_match_status(match):
          return "waiting_for_submissions"
     if submissions_match(submissions[0],submissions[1]):
         return "confirmed"
-    else:
-        return "conflict"
+
+    return "conflict"
     
 
 
