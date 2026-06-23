@@ -14,7 +14,8 @@ from .services import (
     get_submissions,
     submissions_match,
     get_match_status,
-    create_admin_notification_for_conflict
+    create_admin_notification_for_conflict,
+    complete_match_if_result_confirmed,
 )
 
 
@@ -622,6 +623,63 @@ class MatchResultStatusServiceTests(TestCase):
         self.assertEqual(status, "conflict")
 
 
+    def test_complete_match_when_result_confirmed(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        completed = complete_match_if_result_confirmed(self.match)
+
+        self.match.refresh_from_db()
+        self.assertTrue(completed)
+        self.assertEqual(self.match.status, Match.STATUS_COMPLETED)
+
+
+    def test_does_not_complete_match_when_result_conflicts(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+
+        completed = complete_match_if_result_confirmed(self.match)
+
+        self.match.refresh_from_db()
+        self.assertFalse(completed)
+        self.assertEqual(self.match.status, Match.STATUS_SCHEDULED)
+
+
+    def test_does_not_complete_match_when_waiting_for_submissions(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        completed = complete_match_if_result_confirmed(self.match)
+
+        self.match.refresh_from_db()
+        self.assertFalse(completed)
+        self.assertEqual(self.match.status, Match.STATUS_SCHEDULED)
+
+
 
 class AdminNotificationTests(TestCase):
     def setUp(self):
@@ -675,16 +733,16 @@ class AdminNotificationTests(TestCase):
 
     def test_conflict_notification_is_created_when_result_conflict(self):
         MatchResultSubmission.objects.create(
-        match=self.match,
-        submitting_team=self.team_a,
-        team_a_sets_won=2,
-        team_b_sets_won=1,
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
         MatchResultSubmission.objects.create(
-        match=self.match,
-        submitting_team=self.team_b,
-        team_a_sets_won=1,
-        team_b_sets_won=2,
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
         )
 
         notification = create_admin_notification_for_conflict(self.match)
@@ -695,16 +753,16 @@ class AdminNotificationTests(TestCase):
 
     def test_conflict_notification_is_not_created_when_result_confirmed(self):
         MatchResultSubmission.objects.create(
-        match=self.match,
-        submitting_team=self.team_a,
-        team_a_sets_won=2,
-        team_b_sets_won=1,
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
         MatchResultSubmission.objects.create(
-        match=self.match,
-        submitting_team=self.team_b,
-        team_a_sets_won=2,
-        team_b_sets_won=1,
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
 
         notification = create_admin_notification_for_conflict(self.match)
@@ -714,10 +772,10 @@ class AdminNotificationTests(TestCase):
 
     def test_conflict_notification_is_not_created_when_waiting_for_submissions(self):
         MatchResultSubmission.objects.create(
-        match=self.match,
-        submitting_team=self.team_a,
-        team_a_sets_won=2,
-        team_b_sets_won=1,
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
 
         notification = create_admin_notification_for_conflict(self.match)

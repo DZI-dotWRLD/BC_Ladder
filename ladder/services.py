@@ -117,3 +117,14 @@ def create_admin_notification_for_conflict(match):
     )
 
 
+def complete_match_if_result_confirmed(match):
+    status = get_match_status(match)
+
+    if status != "confirmed":
+        return False
+    
+    match.status = Match.STATUS_COMPLETED
+    match.save(update_fields=["status", "updated_at"])
+    return True
+
+
