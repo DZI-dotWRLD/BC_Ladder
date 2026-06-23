@@ -1,7 +1,7 @@
 from collections import defaultdict
 from itertools import combinations
 
-from .models import PlayerProfile, Team, Match
+from .models import PlayerProfile, Team, Match, AdminNotification
 
 #creating pairs in one team, find avability and offer match
 def get_team_players(team: Team):
@@ -99,11 +99,21 @@ def get_match_status(match):
 
     if len(submissions) < 2:
          return "waiting_for_submissions"
-    if submissions_match(submissions[0],submissions[1]):
+    if submissions_match(submissions[0], submissions[1]):
         return "confirmed"
 
     return "conflict"
     
 
+
+def create_admin_notification_for_conflict(match):
+    status = get_match_status(match)
+    if status != "conflict":
+        return None
+    
+    return AdminNotification.objects.create(
+        match=match,
+        message="Result submissions do not match. Admin review is required.",
+    )
 
 

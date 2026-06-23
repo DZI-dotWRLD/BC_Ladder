@@ -13,7 +13,8 @@ from .services import (
     get_team_pair_availability,
     get_submissions,
     submissions_match,
-    get_match_status
+    get_match_status,
+    create_admin_notification_for_conflict
 )
 
 
@@ -670,3 +671,56 @@ class AdminNotificationTests(TestCase):
         )
 
         self.assertIn(notification, self.match.admin_notifications.all())
+
+
+    def test_conflict_notification_is_created_when_result_conflict(self):
+        MatchResultSubmission.objects.create(
+        match=self.match,
+        submitting_team=self.team_a,
+        team_a_sets_won=2,
+        team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+        match=self.match,
+        submitting_team=self.team_b,
+        team_a_sets_won=1,
+        team_b_sets_won=2,
+        )
+
+        notification = create_admin_notification_for_conflict(self.match)
+
+        self.assertIsNotNone(notification)
+        self.assertEqual(notification.match, self.match)
+        self.assertEqual(AdminNotification.objects.count(), 1)
+
+    def test_conflict_notification_is_not_created_when_result_confirmed(self):
+        MatchResultSubmission.objects.create(
+        match=self.match,
+        submitting_team=self.team_a,
+        team_a_sets_won=2,
+        team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+        match=self.match,
+        submitting_team=self.team_b,
+        team_a_sets_won=2,
+        team_b_sets_won=1,
+        )
+
+        notification = create_admin_notification_for_conflict(self.match)
+
+        self.assertIsNone(notification)
+        self.assertEqual(AdminNotification.objects.count(), 0)
+
+    def test_conflict_notification_is_not_created_when_waiting_for_submissions(self):
+        MatchResultSubmission.objects.create(
+        match=self.match,
+        submitting_team=self.team_a,
+        team_a_sets_won=2,
+        team_b_sets_won=1,
+        )
+
+        notification = create_admin_notification_for_conflict(self.match)
+
+        self.assertIsNone(notification)
+        self.assertEqual(AdminNotification.objects.count(), 0)
