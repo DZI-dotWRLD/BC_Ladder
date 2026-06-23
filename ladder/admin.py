@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AvailabilitySlot, Challenge, LadderStanding, PlayerProfile, Team, Match, MatchResultSubmission
+from .models import AvailabilitySlot, Challenge, LadderStanding, PlayerProfile, Team, Match, MatchResultSubmission, AdminNotification
 
 
 class PlayerProfileInline(admin.TabularInline):
@@ -73,6 +73,20 @@ class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_filter = ("submitting_team", "created_at")
 
 
+class AdminNotificationAdmin(admin.ModelAdmin):
+    list_display = (
+        "match",
+        "message",
+        "is_resolved",
+        "created_at",
+        "updated_at",
+    )
+    list_filter = ("is_resolved", "created_at")
+    ordering = ("is_resolved", "-created_at")
+
+
+
+
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
 admin.site.register(Team, TeamAdmin)
 admin.site.register(LadderStanding, LadderStandingAdmin)
@@ -80,3 +94,4 @@ admin.site.register(AvailabilitySlot, AvailabilitySlotAdmin)
 admin.site.register(Challenge, ChallengeAdmin)
 admin.site.register(Match, MatchAdmin)
 admin.site.register(MatchResultSubmission, MatchResultSubmissionAdmin)
+admin.site.register(AdminNotification, AdminNotificationAdmin)

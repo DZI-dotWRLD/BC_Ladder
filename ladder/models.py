@@ -301,3 +301,23 @@ class MatchResultSubmission(models.Model):
 
             if self.submitting_team_id not in valid_team_ids:
                 raise ValidationError("Submitting team must be one of the match teams.")
+            
+
+
+class AdminNotification(models.Model):
+    
+    match = models.ForeignKey(Match,
+                              on_delete=models.CASCADE,
+                              related_name="admin_notifications",
+                              )
+    
+    message = models.TextField()
+    is_resolved = models.BooleanField(
+        default=False,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Notification for {self.match}"

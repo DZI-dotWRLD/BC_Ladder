@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
-from .models import AvailabilitySlot, Challenge, PlayerProfile, Team, Match, MatchResultSubmission
+from .models import AvailabilitySlot, Challenge, PlayerProfile, Team, Match, MatchResultSubmission, AdminNotification
 from .services import (
     find_team_match_options,
     get_pair_matching_slots,
@@ -619,3 +619,54 @@ class MatchResultStatusServiceTests(TestCase):
         status = get_match_status(self.match)
 
         self.assertEqual(status, "conflict")
+
+
+
+class AdminNotificationTests(TestCase):
+    def setUp(self):
+        self.week_start_date = date(2026, 6, 1)
+
+        self.team_a = Team.objects.create(
+            name="Team A",
+            division=Team.DIVISION_MENS,
+        )
+        self.team_b = Team.objects.create(
+            name="Team B",
+            division=Team.DIVISION_MENS,
+        )
+
+        self.match = Match.objects.create(
+            team_a=self.team_a,
+            team_b=self.team_b,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(19, 0),
+        )
+
+    def test_admin_notification_can_be_created_for_match(self):
+        notification = AdminNotification(
+        match=self.match,
+        message="Scores do not match.",
+        )
+
+        notification.full_clean()
+        notification.save()
+
+        self.assertEqual(notification.match, self.match)
+
+    def test_admin_notification_defaults_to_unresolved(self):
+        notification = AdminNotification.objects.create(
+        match=self.match,
+        message="Scores do not match.",
+        )
+
+        self.assertFalse(notification.is_resolved)
+
+    def test_match_can_access_admin_notifications(self):
+        notification = AdminNotification.objects.create(
+        match=self.match,
+        message="Scores do not match.",
+        )
+
+        self.assertIn(notification, self.match.admin_notifications.all())
