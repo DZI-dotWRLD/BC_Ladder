@@ -128,3 +128,21 @@ def complete_match_if_result_confirmed(match):
     return True
 
 
+def get_match_winner(match):
+    if get_match_status(match) != "confirmed":
+        return None
+    
+    submission = list(get_submissions(match))
+    submission = submission[0]
+
+    if submission.team_a_sets_won > submission.team_b_sets_won:
+        return match.team_a
+    
+    if submission.team_a_sets_won < submission.team_b_sets_won:
+        return match.team_b
+    
+    return None
+
+
+    
+    

@@ -16,6 +16,7 @@ from .services import (
     get_match_status,
     create_admin_notification_for_conflict,
     complete_match_if_result_confirmed,
+    get_match_winner,
 )
 
 
@@ -679,6 +680,72 @@ class MatchResultStatusServiceTests(TestCase):
         self.assertFalse(completed)
         self.assertEqual(self.match.status, Match.STATUS_SCHEDULED)
 
+    def test_get_match_winner_returns_team_a_when_team_a_wins(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        winner = get_match_winner(self.match)
+
+        self.assertEqual(winner, self.team_a)
+
+    def test_get_match_winner_returns_team_b_when_team_b_wins(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+
+        winner = get_match_winner(self.match)
+
+        self.assertEqual(winner, self.team_b)
+
+    def test_get_match_winner_returns_none_when_result_conflicts(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+
+        winner = get_match_winner(self.match)
+
+        self.assertIsNone(winner)
+
+    def test_get_match_winner_returns_none_when_waiting_for_submissions(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        winner = get_match_winner(self.match)
+
+        self.assertIsNone(winner)
+
 
 
 class AdminNotificationTests(TestCase):
@@ -782,3 +849,5 @@ class AdminNotificationTests(TestCase):
 
         self.assertIsNone(notification)
         self.assertEqual(AdminNotification.objects.count(), 0)
+
+
