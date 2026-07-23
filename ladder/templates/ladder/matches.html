@@ -1,0 +1,15 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Matches | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>Matches</h1>
+{% for match in matches %}
+    <div class="item">
+        <h2><a href="{% url 'ladder:match_detail' match.id %}">{{ match.team_a.name }} vs {{ match.team_b.name }}</a></h2>
+        <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} · {{ match.get_status_display }}</p>
+    </div>
+{% empty %}
+    <section class="panel"><p class="muted">No matches yet.</p></section>
+{% endfor %}
+{% endblock %}

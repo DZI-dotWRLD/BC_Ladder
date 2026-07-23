@@ -1,0 +1,45 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Dashboard | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<div class="grid">
+    <section class="panel">
+        <h2>Team</h2>
+        {% if team %}
+            <p>{{ team.name }} · {{ team.get_division_display }}</p>
+            <a class="button" href="{% url 'ladder:team' %}">Manage team</a>
+        {% else %}
+            <p class="muted">You are not on a team.</p>
+            <a class="button" href="{% url 'ladder:team' %}">Choose team</a>
+        {% endif %}
+    </section>
+    <section class="panel">
+        <h2>Availability</h2>
+        {% for slot in availability %}
+            <p>{{ slot.starts_at|date:"M j, Y g:i A" }} to {{ slot.ends_at|date:"g:i A" }}</p>
+        {% empty %}
+            <p class="muted">No active availability.</p>
+        {% endfor %}
+        <a class="button" href="{% url 'ladder:availability' %}">Manage availability</a>
+    </section>
+    <section class="panel">
+        <h2>Suggestions</h2>
+        {% for suggestion in suggestions %}
+            <p>{{ suggestion.team_a }} vs {{ suggestion.team_b }} · {{ suggestion.get_status_display }}</p>
+        {% empty %}
+            <p class="muted">No current suggestions.</p>
+        {% endfor %}
+        <a class="button" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
+    </section>
+    <section class="panel">
+        <h2>Matches</h2>
+        {% for match in matches %}
+            <p><a href="{% url 'ladder:match_detail' match.id %}">{{ match.team_a }} vs {{ match.team_b }}</a></p>
+        {% empty %}
+            <p class="muted">No matches yet.</p>
+        {% endfor %}
+    </section>
+</div>
+{% endblock %}

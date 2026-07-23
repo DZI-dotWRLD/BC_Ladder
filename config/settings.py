@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -19,13 +20,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-_)81gmsc&f@)^y*26qxmc!9xripus8c2zn2ydoig@wwzn2*&7y'
+def env_bool(name, default=False):
+    return os.environ.get(name, str(default)).lower() in {"1", "true", "yes", "on"}
+
+
+def env_list(name, default=""):
+    value = os.environ.get(name, default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+# Development fallback only. Set DJANGO_SECRET_KEY in every deployed environment.
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bc-ladder-development-only-secret-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool("DJANGO_DEBUG", True)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 
 # Application definition
@@ -73,10 +83,20 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+if os.environ.get("DATABASE_URL"):
+    raise RuntimeError(
+        "DATABASE_URL parsing is not configured. Set DJANGO_DB_ENGINE, DJANGO_DB_NAME, "
+        "DJANGO_DB_USER, DJANGO_DB_PASSWORD, DJANGO_DB_HOST, and DJANGO_DB_PORT instead."
+    )
+
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    "default": {
+        "ENGINE": os.environ.get("DJANGO_DB_ENGINE", "django.db.backends.sqlite3"),
+        "NAME": os.environ.get("DJANGO_DB_NAME", BASE_DIR / "db.sqlite3"),
+        "USER": os.environ.get("DJANGO_DB_USER", ""),
+        "PASSWORD": os.environ.get("DJANGO_DB_PASSWORD", ""),
+        "HOST": os.environ.get("DJANGO_DB_HOST", ""),
+        "PORT": os.environ.get("DJANGO_DB_PORT", ""),
     }
 }
 
@@ -105,7 +125,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "America/New_York")
 
 USE_I18N = True
 
@@ -116,3 +136,21 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+LOGIN_URL = "ladder:login"
+LOGIN_REDIRECT_URL = "ladder:dashboard"
+LOGOUT_REDIRECT_URL = "ladder:login"
+
+SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", not DEBUG)
+CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", not DEBUG)
+SECURE_PROXY_SSL_HEADER_NAME = os.environ.get("DJANGO_SECURE_PROXY_SSL_HEADER_NAME", "")
+SECURE_PROXY_SSL_HEADER_VALUE = os.environ.get("DJANGO_SECURE_PROXY_SSL_HEADER_VALUE", "")
+SECURE_PROXY_SSL_HEADER = (
+    (SECURE_PROXY_SSL_HEADER_NAME, SECURE_PROXY_SSL_HEADER_VALUE)
+    if SECURE_PROXY_SSL_HEADER_NAME and SECURE_PROXY_SSL_HEADER_VALUE
+    else None
+)
+SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)

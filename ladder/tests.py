@@ -1,13 +1,36 @@
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from django.urls import reverse
 
-from .models import AvailabilitySlot, Challenge, PlayerProfile, Team, Match, MatchResultSubmission, AdminNotification
+from .models import (
+    AdminNotification,
+    AvailabilitySlot,
+    Challenge,
+    ConfirmedMatchResult,
+    LadderStanding,
+    Match,
+    MatchReservation,
+    MatchResultSubmission,
+    MatchSuggestion,
+    PlayerProfile,
+    PointLedger,
+    Team,
+    TeamMembership,
+)
 from .services import (
+    AuthorizationFailure,
+    InvalidInput,
+    accept_suggestion,
+    create_match_suggestion,
     find_team_match_options,
+    find_opponent_suggestions,
+    finalize_match_result,
+    generate_team_lineups,
     get_pair_matching_slots,
     get_player_pairs,
     get_team_pair_availability,
@@ -16,6 +39,12 @@ from .services import (
     get_match_status,
     create_admin_notification_for_conflict,
     complete_match_if_result_confirmed,
+    get_match_winner_and_loser,
+    request_membership_change,
+    resolve_membership_request,
+    save_availability,
+    submit_match_result,
+    validate_match_score,
 )
 
 
@@ -679,6 +708,72 @@ class MatchResultStatusServiceTests(TestCase):
         self.assertFalse(completed)
         self.assertEqual(self.match.status, Match.STATUS_SCHEDULED)
 
+    def test_get_match_winner_and_loser_returns_team_a_when_team_a_wins(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        result = get_match_winner_and_loser(self.match)
+
+        self.assertEqual(result, [self.team_a, self.team_b])
+
+    def test_get_match_winner_and_loser_returns_team_b_when_team_b_wins(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+
+        result = get_match_winner_and_loser(self.match)
+
+        self.assertEqual(result, [self.team_b, self.team_a])
+
+    def test_get_match_winner_and_loser_returns_none_when_result_conflicts(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=1,
+            team_b_sets_won=2,
+        )
+
+        winner = get_match_winner_and_loser(self.match)
+
+        self.assertEqual(winner, [])
+
+    def test_get_match_winner__and_loser_returns_none_when_waiting_for_submissions(self):
+        MatchResultSubmission.objects.create(
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
+        )
+
+        winner = get_match_winner_and_loser(self.match)
+
+        self.assertEqual(winner, [])
+
 
 
 class AdminNotificationTests(TestCase):
@@ -782,3 +877,338 @@ class AdminNotificationTests(TestCase):
 
         self.assertIsNone(notification)
         self.assertEqual(AdminNotification.objects.count(), 0)
+
+
+class RemediationServiceTests(TestCase):
+    club_tz = ZoneInfo("America/New_York")
+
+    def create_profile(self, username, gender=PlayerProfile.GENDER_MALE, team=None, is_staff=False):
+        user = get_user_model().objects.create_user(username=username)
+        user.is_staff = is_staff
+        user.save(update_fields=["is_staff"])
+        return PlayerProfile.objects.create(user=user, gender=gender, team=team)
+
+    def make_dt(self, year, month, day, hour, minute=0):
+        return datetime(year, month, day, hour, minute, tzinfo=self.club_tz)
+
+    def create_team_with_members(self, name, count, division=Team.DIVISION_MENS):
+        team = Team.objects.create(name=name, division=division)
+        players = []
+        for index in range(1, count + 1):
+            gender = PlayerProfile.GENDER_MALE if division == Team.DIVISION_MENS else PlayerProfile.GENDER_FEMALE
+            profile = self.create_profile(f"{name}-{index}", gender=gender)
+            request_membership_change(profile.user, profile, team, "join")
+            players.append(profile)
+        return team, players
+
+    def test_membership_join_enforces_one_active_team_and_three_member_limit(self):
+        team, players = self.create_team_with_members("members", 3)
+        other_team = Team.objects.create(name="other", division=Team.DIVISION_MENS)
+
+        with self.assertRaises(InvalidInput):
+            request_membership_change(players[0].user, players[0], other_team, "join")
+
+        fourth = self.create_profile("fourth")
+        with self.assertRaises(InvalidInput):
+            request_membership_change(fourth.user, fourth, team, "join")
+
+        self.assertEqual(TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count(), 3)
+
+    def test_admin_resolves_removal_request_without_deleting_history(self):
+        team, players = self.create_team_with_members("remove", 1)
+        membership = request_membership_change(players[0].user, players[0], action="request_removal")
+        admin_profile = self.create_profile("admin", is_staff=True)
+
+        request = TeamMembership.objects.get(pk=membership.pk)
+        resolved = resolve_membership_request(admin_profile.user, request, "approve")
+
+        players[0].refresh_from_db()
+        self.assertEqual(resolved.status, TeamMembership.STATUS_INACTIVE)
+        self.assertIsNone(players[0].team)
+        self.assertTrue(TeamMembership.objects.filter(team=team, player=players[0]).exists())
+
+    def test_save_availability_is_idempotent_and_rejects_overlap(self):
+        team, players = self.create_team_with_members("availability", 1)
+        starts_at = self.make_dt(2026, 7, 6, 18)
+        ends_at = self.make_dt(2026, 7, 6, 20)
+
+        first = save_availability(players[0].user, starts_at, ends_at)
+        second = save_availability(players[0].user, starts_at, ends_at)
+
+        self.assertEqual(first, second)
+        with self.assertRaises(InvalidInput):
+            save_availability(players[0].user, self.make_dt(2026, 7, 6, 19), self.make_dt(2026, 7, 6, 21))
+        self.assertEqual(AvailabilitySlot.objects.filter(player=players[0]).count(), 1)
+
+    def test_generate_team_lineups_returns_three_stable_interval_pairings(self):
+        team, players = self.create_team_with_members("lineups", 3)
+        starts_at = self.make_dt(2026, 7, 7, 18)
+        ends_at = self.make_dt(2026, 7, 7, 20)
+        for player in players:
+            save_availability(player.user, starts_at, ends_at)
+
+        lineups = generate_team_lineups(team, (starts_at, ends_at))
+        lineup_ids = [tuple(player.id for player in lineup["players"]) for lineup in lineups]
+
+        self.assertEqual(lineup_ids, [
+            (players[0].id, players[1].id),
+            (players[0].id, players[2].id),
+            (players[1].id, players[2].id),
+        ])
+
+    def test_dual_acceptance_confirms_match_and_consumes_only_four_players(self):
+        team_a, team_a_players = self.create_team_with_members("accept-a", 3)
+        team_b, team_b_players = self.create_team_with_members("accept-b", 2)
+        starts_at = self.make_dt(2026, 7, 8, 18)
+        ends_at = self.make_dt(2026, 7, 8, 20)
+        for player in team_a_players[:2] + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+        third_slot = save_availability(team_a_players[2].user, starts_at, ends_at)
+
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 8, 1, tzinfo=self.club_tz))
+
+        partial = accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
+        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        retry = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+
+        third_slot.refresh_from_db()
+        self.assertEqual(partial.status, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED)
+        self.assertEqual(match, retry)
+        self.assertEqual(MatchReservation.objects.filter(match=match).count(), 4)
+        self.assertEqual(AvailabilitySlot.objects.filter(status=AvailabilitySlot.STATUS_CONSUMED).count(), 4)
+        self.assertEqual(third_slot.status, AvailabilitySlot.STATUS_ACTIVE)
+
+    def test_score_validation_accepts_match_tiebreak_and_rejects_ten_nine(self):
+        for breaker in [(10, 8), (11, 9), (12, 10)]:
+            score = validate_match_score([(6, 4), (4, 6), breaker])
+            self.assertEqual(score["winner_team_side"], "team_a")
+
+        with self.assertRaises(InvalidInput):
+            validate_match_score([(6, 4), (4, 6), (10, 9)])
+        with self.assertRaises(InvalidInput):
+            validate_match_score([(6, 4), (7, 5), (10, 8)])
+
+    def test_score_submission_authorization_conflict_and_exactly_once_points(self):
+        team_a, team_a_players = self.create_team_with_members("score-a", 2)
+        team_b, team_b_players = self.create_team_with_members("score-b", 2)
+        _, outside_players = self.create_team_with_members("score-outside", 1)
+        LadderStanding.objects.create(team=team_a, position=1)
+        LadderStanding.objects.create(team=team_b, position=2)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 7, 6),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2026, 7, 6, 18),
+            scheduled_ends_at=self.make_dt(2026, 7, 6, 20),
+        )
+
+        with self.assertRaises(AuthorizationFailure):
+            submit_match_result(outside_players[0].user, match, [(6, 4), (6, 4)])
+
+        first = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+        duplicate = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+        self.assertEqual(first, duplicate)
+
+        submit_match_result(team_b_players[0].user, match, [(4, 6), (4, 6)])
+        create_admin_notification_for_conflict(match)
+        create_admin_notification_for_conflict(match)
+        self.assertEqual(AdminNotification.objects.filter(match=match, is_resolved=False).count(), 1)
+
+        match.result_submissions.all().delete()
+        match.admin_notifications.all().delete()
+        submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+        submit_match_result(team_b_players[0].user, match, [(6, 4), (6, 4)])
+        finalize_match_result(match)
+        finalize_match_result(match)
+        team_a.standing.refresh_from_db()
+        team_b.standing.refresh_from_db()
+
+        self.assertEqual(team_a.standing.points, 3)
+        self.assertEqual(team_a.standing.wins, 1)
+        self.assertEqual(team_b.standing.losses, 1)
+        self.assertEqual(ConfirmedMatchResult.objects.count(), 1)
+        self.assertEqual(PointLedger.objects.filter(match=match).count(), 2)
+
+
+class PhaseARequestTests(TestCase):
+    club_tz = ZoneInfo("America/New_York")
+
+    def create_profile(self, username, gender=PlayerProfile.GENDER_MALE):
+        user = get_user_model().objects.create_user(username=username, password="pass")
+        return PlayerProfile.objects.create(user=user, gender=gender)
+
+    def make_dt(self, year, month, day, hour, minute=0):
+        return datetime(year, month, day, hour, minute, tzinfo=self.club_tz)
+
+    def create_team_with_members(self, name, count):
+        team = Team.objects.create(name=name, division=Team.DIVISION_MENS)
+        players = []
+        for index in range(1, count + 1):
+            profile = self.create_profile(f"{name}-{index}")
+            request_membership_change(profile.user, profile, team, "join")
+            players.append(profile)
+        return team, players
+
+    def test_dashboard_requires_login(self):
+        response = self.client.get(reverse("ladder:dashboard"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("ladder:login"), response["Location"])
+
+    def test_login_redirects_to_dashboard(self):
+        profile = self.create_profile("login-redirect")
+
+        response = self.client.post(
+            reverse("ladder:login"),
+            {"username": profile.user.username, "password": "pass"},
+        )
+
+        self.assertRedirects(response, reverse("ladder:dashboard"))
+
+    def test_dashboard_redirects_user_without_profile_to_setup(self):
+        user = get_user_model().objects.create_user(username="needs-profile", password="pass")
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("ladder:dashboard"))
+
+        self.assertRedirects(response, reverse("ladder:profile_setup"))
+
+    def test_profile_setup_creates_profile_for_logged_in_user(self):
+        user = get_user_model().objects.create_user(username="new-player", password="pass")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("ladder:profile_setup"),
+            {"gender": PlayerProfile.GENDER_MALE},
+        )
+
+        self.assertRedirects(response, reverse("ladder:dashboard"))
+        self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_MALE).exists())
+
+    def test_authenticated_dashboard_renders_player_state(self):
+        team, players = self.create_team_with_members("dashboard", 1)
+        self.client.force_login(players[0].user)
+
+        response = self.client.get(reverse("ladder:dashboard"))
+
+        self.assertContains(response, "Dashboard")
+        self.assertContains(response, team.name)
+
+    def test_team_join_is_post_only_and_scoped_to_player_division(self):
+        profile = self.create_profile("joiner")
+        mens_team = Team.objects.create(name="Join Team", division=Team.DIVISION_MENS)
+        self.client.force_login(profile.user)
+
+        get_response = self.client.get(reverse("ladder:join_team"))
+        post_response = self.client.post(reverse("ladder:join_team"), {"team": mens_team.id})
+
+        profile.refresh_from_db()
+        self.assertEqual(get_response.status_code, 302)
+        self.assertEqual(post_response.status_code, 302)
+        self.assertEqual(profile.team, mens_team)
+        self.assertTrue(TeamMembership.objects.filter(player=profile, team=mens_team).exists())
+
+    def test_availability_create_and_cancel_are_owner_scoped(self):
+        team, players = self.create_team_with_members("availability-page", 1)
+        other = self.create_profile("other")
+        self.client.force_login(players[0].user)
+
+        create_response = self.client.post(
+            reverse("ladder:availability"),
+            {"starts_at": "2026-07-27T18:00", "ends_at": "2026-07-27T20:00"},
+        )
+        slot = AvailabilitySlot.objects.get(player=players[0])
+        cancel_response = self.client.post(reverse("ladder:cancel_availability", args=[slot.id]))
+
+        save_availability(other.user, self.make_dt(2026, 7, 28, 18), self.make_dt(2026, 7, 28, 20))
+        other_slot = AvailabilitySlot.objects.get(player=other)
+        blocked_response = self.client.post(reverse("ladder:cancel_availability", args=[other_slot.id]))
+        other_slot.refresh_from_db()
+
+        self.assertEqual(create_response.status_code, 302)
+        self.assertEqual(cancel_response.status_code, 302)
+        slot.refresh_from_db()
+        self.assertEqual(slot.status, AvailabilitySlot.STATUS_CANCELLED)
+        self.assertEqual(blocked_response.status_code, 302)
+        self.assertEqual(other_slot.status, AvailabilitySlot.STATUS_ACTIVE)
+
+    def test_suggestion_create_and_dual_acceptance_flow(self):
+        team_a, team_a_players = self.create_team_with_members("phase-a", 2)
+        team_b, team_b_players = self.create_team_with_members("phase-b", 2)
+        starts_at = self.make_dt(2026, 7, 29, 18)
+        ends_at = self.make_dt(2026, 7, 29, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+
+        self.client.force_login(team_a_players[0].user)
+        create_response = self.client.post(reverse("ladder:create_suggestion", args=[0]))
+        suggestion = MatchSuggestion.objects.get()
+        first_accept = self.client.post(
+            reverse("ladder:accept_suggestion", args=[suggestion.id]),
+            {"version": suggestion.version},
+        )
+        self.client.force_login(team_b_players[0].user)
+        second_accept = self.client.post(
+            reverse("ladder:accept_suggestion", args=[suggestion.id]),
+            {"version": suggestion.version},
+        )
+
+        self.assertEqual(create_response.status_code, 302)
+        self.assertEqual(first_accept.status_code, 302)
+        self.assertEqual(second_accept.status_code, 302)
+        self.assertEqual(Match.objects.count(), 1)
+        self.assertEqual(MatchReservation.objects.count(), 4)
+
+    def test_match_detail_blocks_unrelated_player_and_score_submission_updates_result(self):
+        team_a, team_a_players = self.create_team_with_members("score-page-a", 2)
+        team_b, team_b_players = self.create_team_with_members("score-page-b", 2)
+        _, outside_players = self.create_team_with_members("score-page-out", 1)
+        LadderStanding.objects.create(team=team_a, position=1)
+        LadderStanding.objects.create(team=team_b, position=2)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 7, 27),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2026, 7, 27, 18),
+            scheduled_ends_at=self.make_dt(2026, 7, 27, 20),
+        )
+
+        self.client.force_login(outside_players[0].user)
+        denied = self.client.get(reverse("ladder:match_detail", args=[match.id]))
+        self.client.force_login(team_a_players[0].user)
+        first = self.client.post(
+            reverse("ladder:submit_score", args=[match.id]),
+            {"set1_team_a": 6, "set1_team_b": 4, "set2_team_a": 6, "set2_team_b": 4},
+        )
+        self.client.force_login(team_b_players[0].user)
+        second = self.client.post(
+            reverse("ladder:submit_score", args=[match.id]),
+            {"set1_team_a": 6, "set1_team_b": 4, "set2_team_a": 6, "set2_team_b": 4},
+        )
+
+        match.refresh_from_db()
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(first.status_code, 302)
+        self.assertEqual(second.status_code, 302)
+        self.assertEqual(match.status, Match.STATUS_COMPLETED)
+        self.assertEqual(PointLedger.objects.filter(match=match).count(), 2)
+
+    def test_ladder_page_is_authenticated_and_scoped_by_division(self):
+        mens_team = Team.objects.create(name="Mens Ladder Team", division=Team.DIVISION_MENS)
+        womens_team = Team.objects.create(name="Womens Ladder Team", division=Team.DIVISION_WOMENS)
+        LadderStanding.objects.create(team=mens_team, position=1, points=3)
+        LadderStanding.objects.create(team=womens_team, position=1, points=9)
+        profile = self.create_profile("ladder-viewer")
+        self.client.force_login(profile.user)
+
+        response = self.client.get(reverse("ladder:ladder", args=[Team.DIVISION_MENS]))
+
+        self.assertContains(response, mens_team.name)
+        self.assertNotContains(response, womens_team.name)
