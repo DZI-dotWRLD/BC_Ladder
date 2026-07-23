@@ -1,0 +1,34 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Availability | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>Availability</h1>
+<div class="grid">
+    <section class="panel">
+        <h2>Add Window</h2>
+        <form method="post">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit">Save availability</button>
+        </form>
+    </section>
+    <section class="panel">
+        <h2>Your Windows</h2>
+        {% for slot in slots %}
+            <div class="item">
+                <p>{{ slot.starts_at|date:"M j, Y g:i A" }} to {{ slot.ends_at|date:"g:i A" }}</p>
+                <p class="muted">{{ slot.get_status_display }}</p>
+                {% if slot.status == "active" %}
+                    <form method="post" action="{% url 'ladder:cancel_availability' slot.id %}">
+                        {% csrf_token %}
+                        <button class="danger" type="submit">Cancel</button>
+                    </form>
+                {% endif %}
+            </div>
+        {% empty %}
+            <p class="muted">No availability entered.</p>
+        {% endfor %}
+    </section>
+</div>
+{% endblock %}

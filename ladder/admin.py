@@ -1,6 +1,24 @@
 from django.contrib import admin
 
-from .models import AvailabilitySlot, Challenge, LadderStanding, PlayerProfile, Team, Match, MatchResultSubmission, AdminNotification
+from .models import (
+    AdminNotification,
+    AvailabilitySlot,
+    Challenge,
+    ConfirmedMatchResult,
+    LadderStanding,
+    Match,
+    MatchParticipant,
+    MatchReservation,
+    MatchResultSet,
+    MatchResultSubmission,
+    MatchSuggestion,
+    PlayerProfile,
+    PointLedger,
+    SuggestionAcceptance,
+    SuggestionParticipant,
+    Team,
+    TeamMembership,
+)
 
 
 class PlayerProfileInline(admin.TabularInline):
@@ -10,16 +28,27 @@ class PlayerProfileInline(admin.TabularInline):
 
 class TeamAdmin(admin.ModelAdmin):
     inlines = [PlayerProfileInline]
-    list_display = ("name", "division", "created_at")
+    list_display = ("name", "division", "status", "created_at")
+    list_filter = ("division", "status")
 
 
 class PlayerProfileAdmin(admin.ModelAdmin):
     list_display = ("user", "gender", "team", "created_at")
+    list_select_related = ("user", "team")
+
+
+class TeamMembershipAdmin(admin.ModelAdmin):
+    list_display = ("player", "team", "status", "removal_requested_at", "reviewed_by", "resolved_at")
+    list_filter = ("status", "team__division", "removal_requested_at")
+    list_select_related = ("player__user", "team", "reviewed_by")
+    readonly_fields = ("created_at", "updated_at", "effective_from", "effective_to", "reviewed_by", "resolved_at")
 
 
 class LadderStandingAdmin(admin.ModelAdmin):
     list_display = ("position", "team", "points", "wins", "losses", "matches_played", "updated_at")
     ordering = ("position",)
+    list_select_related = ("team",)
+    readonly_fields = ("matches_played", "wins", "losses", "points", "updated_at")
 
 
 class AvailabilitySlotAdmin(admin.ModelAdmin):
@@ -29,9 +58,14 @@ class AvailabilitySlotAdmin(admin.ModelAdmin):
         "day_of_week",
         "start_time",
         "end_time",
+        "starts_at",
+        "ends_at",
+        "status",
         "created_at",
     )
-    ordering = ("week_start_date", "day_of_week", "start_time")
+    list_filter = ("status", "week_start_date", "day_of_week")
+    list_select_related = ("player__user",)
+    ordering = ("starts_at", "week_start_date", "day_of_week", "start_time")
 
 
 class ChallengeAdmin(admin.ModelAdmin):
@@ -57,41 +91,108 @@ class MatchAdmin(admin.ModelAdmin):
         "scheduled_day_of_week",
         "scheduled_start_time",
         "scheduled_end_time",
+        "scheduled_starts_at",
+        "scheduled_ends_at",
         "status",
     )
     list_filter = ("status", "scheduled_week_start_date", "scheduled_day_of_week")
-    ordering = ("scheduled_week_start_date", "scheduled_day_of_week", "scheduled_start_time")
+    list_select_related = ("team_a", "team_b", "source_suggestion")
+    readonly_fields = ("status", "source_suggestion", "created_at", "updated_at")
+    ordering = ("scheduled_starts_at", "scheduled_week_start_date", "scheduled_day_of_week", "scheduled_start_time")
 
 class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_display = (
         "match",
         "submitting_team",
+        "submitting_user",
         "team_a_sets_won",
         "team_b_sets_won",
         "created_at",
     )
     list_filter = ("submitting_team", "created_at")
+    list_select_related = ("match", "submitting_team", "submitting_user")
+    readonly_fields = ("match", "submitting_team", "submitting_user", "team_a_sets_won", "team_b_sets_won", "created_at", "updated_at")
 
 
 class AdminNotificationAdmin(admin.ModelAdmin):
     list_display = (
         "match",
+        "notification_type",
         "message",
         "is_resolved",
         "created_at",
         "updated_at",
     )
-    list_filter = ("is_resolved", "created_at")
+    list_filter = ("notification_type", "is_resolved", "created_at")
+    list_select_related = ("match",)
     ordering = ("is_resolved", "-created_at")
+
+
+class MatchSuggestionAdmin(admin.ModelAdmin):
+    list_display = ("team_a", "team_b", "starts_at", "ends_at", "status", "version", "expires_at")
+    list_filter = ("status", "team_a__division")
+    list_select_related = ("team_a", "team_b")
+    readonly_fields = ("status", "version", "created_at", "updated_at")
+
+
+class SuggestionParticipantAdmin(admin.ModelAdmin):
+    list_display = ("suggestion", "side", "lineup_order", "team", "player")
+    list_select_related = ("suggestion", "team", "player__user")
+
+
+class SuggestionAcceptanceAdmin(admin.ModelAdmin):
+    list_display = ("suggestion", "team", "accepted_by", "accepted_version", "created_at")
+    list_select_related = ("suggestion", "team", "accepted_by")
+    readonly_fields = ("suggestion", "team", "accepted_by", "accepted_version", "created_at")
+
+
+class MatchParticipantAdmin(admin.ModelAdmin):
+    list_display = ("match", "side", "lineup_order", "team", "player")
+    list_select_related = ("match", "team", "player__user")
+    readonly_fields = ("match", "side", "lineup_order", "team", "player")
+
+
+class MatchReservationAdmin(admin.ModelAdmin):
+    list_display = ("match", "player", "starts_at", "ends_at", "status")
+    list_filter = ("status",)
+    list_select_related = ("match", "player__user", "availability")
+    readonly_fields = ("match", "player", "availability", "starts_at", "ends_at", "created_at")
+
+
+class MatchResultSetAdmin(admin.ModelAdmin):
+    list_display = ("submission", "set_order", "set_type", "team_a_score", "team_b_score")
+    list_select_related = ("submission",)
+    readonly_fields = ("submission", "set_order", "set_type", "team_a_score", "team_b_score")
+
+
+class ConfirmedMatchResultAdmin(admin.ModelAdmin):
+    list_display = ("match", "winning_team", "losing_team", "confirmed_at")
+    list_select_related = ("match", "winning_team", "losing_team", "confirmed_from_submission")
+    readonly_fields = ("match", "winning_team", "losing_team", "confirmed_from_submission", "confirmed_at")
+
+
+class PointLedgerAdmin(admin.ModelAdmin):
+    list_display = ("match", "team", "points_delta", "reason", "created_at")
+    list_select_related = ("match", "team")
+    readonly_fields = ("match", "team", "points_delta", "reason", "created_at")
 
 
 
 
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
 admin.site.register(Team, TeamAdmin)
+admin.site.register(TeamMembership, TeamMembershipAdmin)
 admin.site.register(LadderStanding, LadderStandingAdmin)
 admin.site.register(AvailabilitySlot, AvailabilitySlotAdmin)
 admin.site.register(Challenge, ChallengeAdmin)
+admin.site.register(MatchSuggestion, MatchSuggestionAdmin)
+admin.site.register(SuggestionParticipant, SuggestionParticipantAdmin)
+admin.site.register(SuggestionAcceptance, SuggestionAcceptanceAdmin)
 admin.site.register(Match, MatchAdmin)
+admin.site.register(MatchParticipant, MatchParticipantAdmin)
+admin.site.register(MatchReservation, MatchReservationAdmin)
 admin.site.register(MatchResultSubmission, MatchResultSubmissionAdmin)
+admin.site.register(MatchResultSet, MatchResultSetAdmin)
+admin.site.register(ConfirmedMatchResult, ConfirmedMatchResultAdmin)
+admin.site.register(PointLedger, PointLedgerAdmin)
 admin.site.register(AdminNotification, AdminNotificationAdmin)

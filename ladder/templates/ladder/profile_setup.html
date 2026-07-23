@@ -1,0 +1,15 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Profile Setup | BC Ladder{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <h1>Player Profile</h1>
+    <p class="muted">Select your division eligibility before using player features.</p>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Create profile</button>
+    </form>
+</section>
+{% endblock %}

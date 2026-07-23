@@ -1,0 +1,47 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Suggestions | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>Suggestions</h1>
+{% if not team %}
+    <section class="panel"><p class="muted">Join a team before reviewing suggestions.</p></section>
+{% else %}
+    <div class="grid">
+        <section class="panel">
+            <h2>Available Options</h2>
+            {% for option in options %}
+                <div class="item">
+                    <p>{{ option.team_a.name }} vs {{ option.team_b.name }}</p>
+                    <p class="muted">{{ option.starts_at|date:"M j, Y g:i A" }} to {{ option.ends_at|date:"g:i A" }}</p>
+                    <p>{{ option.team_a_players.0.user.username }} / {{ option.team_a_players.1.user.username }} vs {{ option.team_b_players.0.user.username }} / {{ option.team_b_players.1.user.username }}</p>
+                    <form method="post" action="{% url 'ladder:create_suggestion' forloop.counter0 %}">
+                        {% csrf_token %}
+                        <button type="submit">Create suggestion</button>
+                    </form>
+                </div>
+            {% empty %}
+                <p class="muted">No compatible options in the next 30 days.</p>
+            {% endfor %}
+        </section>
+        <section class="panel">
+            <h2>Current Suggestions</h2>
+            {% for suggestion in existing %}
+                <div class="item">
+                    <p>{{ suggestion.team_a.name }} vs {{ suggestion.team_b.name }}</p>
+                    <p class="muted">{{ suggestion.starts_at|date:"M j, Y g:i A" }} · {{ suggestion.get_status_display }}</p>
+                    {% if suggestion.status == "proposed" or suggestion.status == "partially_accepted" %}
+                        <form method="post" action="{% url 'ladder:accept_suggestion' suggestion.id %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="version" value="{{ suggestion.version }}">
+                            <button type="submit">Accept</button>
+                        </form>
+                    {% endif %}
+                </div>
+            {% empty %}
+                <p class="muted">No suggestions have been created.</p>
+            {% endfor %}
+        </section>
+    </div>
+{% endif %}
+{% endblock %}

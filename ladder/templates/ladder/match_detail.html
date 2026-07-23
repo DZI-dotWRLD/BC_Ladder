@@ -1,0 +1,34 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Match | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>{{ match.team_a.name }} vs {{ match.team_b.name }}</h1>
+<section class="panel">
+    <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A" }}</p>
+    <p>Status: {{ match.get_status_display }} · Result: {{ status }}</p>
+    <h2>Players</h2>
+    {% for participant in match.participants.all %}
+        <p>{{ participant.team.name }}: {{ participant.player.user.username }}</p>
+    {% empty %}
+        <p class="muted">No participant records for this legacy match.</p>
+    {% endfor %}
+</section>
+{% if match.status == "scheduled" %}
+    <section class="panel">
+        <h2>Submit Score</h2>
+        <form method="post" action="{% url 'ladder:submit_score' match.id %}">
+            {% csrf_token %}
+            <div class="score-grid">
+                <label>Set 1 {{ match.team_a.name }} {{ score_form.set1_team_a }}</label>
+                <label>Set 1 {{ match.team_b.name }} {{ score_form.set1_team_b }}</label>
+                <label>Set 2 {{ match.team_a.name }} {{ score_form.set2_team_a }}</label>
+                <label>Set 2 {{ match.team_b.name }} {{ score_form.set2_team_b }}</label>
+                <label>TB {{ match.team_a.name }} {{ score_form.set3_team_a }}</label>
+                <label>TB {{ match.team_b.name }} {{ score_form.set3_team_b }}</label>
+            </div>
+            <button type="submit">Submit score</button>
+        </form>
+    </section>
+{% endif %}
+{% endblock %}

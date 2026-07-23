@@ -1,0 +1,40 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Team | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>Team</h1>
+<div class="grid">
+    <section class="panel">
+        {% if team %}
+            <h2>{{ team.name }}</h2>
+            <p>{{ team.get_division_display }} doubles</p>
+            <h3>Members</h3>
+            {% for member in members %}
+                <p>{{ member.user.username }}</p>
+            {% endfor %}
+            {% if membership and not membership.removal_requested_at %}
+                <form method="post" action="{% url 'ladder:request_team_removal' %}">
+                    {% csrf_token %}
+                    <button class="danger" type="submit">Request removal</button>
+                </form>
+            {% elif membership and membership.removal_requested_at %}
+                <p class="muted">Removal request pending admin review.</p>
+            {% endif %}
+        {% else %}
+            <h2>No active team</h2>
+            <p class="muted">Choose a team in your division.</p>
+        {% endif %}
+    </section>
+    {% if not team %}
+        <section class="panel">
+            <h2>Join Team</h2>
+            <form method="post" action="{% url 'ladder:join_team' %}">
+                {% csrf_token %}
+                {{ join_form.as_p }}
+                <button type="submit">Join team</button>
+            </form>
+        </section>
+    {% endif %}
+</div>
+{% endblock %}

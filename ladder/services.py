@@ -1,57 +1,361 @@
 from collections import defaultdict
+from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
 from itertools import combinations
+from zoneinfo import ZoneInfo
 
-from .models import PlayerProfile, Team, Match, AdminNotification
+from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Max, Q
+from django.utils import timezone
 
-#creating pairs in one team, find avability and offer match
+from .models import (
+    AdminNotification,
+    AvailabilitySlot,
+    ConfirmedMatchResult,
+    LadderStanding,
+    Match,
+    MatchParticipant,
+    MatchReservation,
+    MatchResultSet,
+    MatchResultSubmission,
+    MatchSuggestion,
+    PlayerProfile,
+    PointLedger,
+    SuggestionAcceptance,
+    SuggestionParticipant,
+    Team,
+    TeamMembership,
+)
+
+CLUB_TIMEZONE = ZoneInfo("America/New_York")
+WIN_POINTS = 3
+DEFAULT_SUGGESTION_EXPIRY = timedelta(days=7)
+
+
+class DomainError(Exception):
+    pass
+
+
+class InvalidInput(DomainError):
+    pass
+
+
+class StaleState(DomainError):
+    pass
+
+
+class AuthorizationFailure(DomainError):
+    pass
+
+
+class BookingCollision(DomainError):
+    pass
+
+
+def _profile_for_user(user):
+    if not user or not getattr(user, "is_authenticated", False):
+        raise AuthorizationFailure("Authentication is required.")
+    try:
+        return user.player_profile
+    except PlayerProfile.DoesNotExist as exc:
+        raise AuthorizationFailure("User does not have a player profile.") from exc
+
+
+def _active_memberships_for_team(team):
+    memberships = list(
+        TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE)
+        .select_related("player__user", "team")
+        .order_by("player_id")
+    )
+    if memberships:
+        return memberships
+
+    now = timezone.now()
+    return [
+        TeamMembership(player=player, team=team, status=TeamMembership.STATUS_ACTIVE, effective_from=now)
+        for player in team.players.select_related("user").order_by("id")
+    ]
+
+
+def _active_team_for_player(player):
+    membership = (
+        TeamMembership.objects.filter(player=player, status=TeamMembership.STATUS_ACTIVE)
+        .select_related("team")
+        .first()
+    )
+    return membership.team if membership else player.team
+
+
+def _player_belongs_to_team(player, team):
+    return _active_team_for_player(player) == team
+
+
+def _validate_player_division(player, team):
+    if player.gender == PlayerProfile.GENDER_MALE and team.division != Team.DIVISION_MENS:
+        raise InvalidInput("Male players can only join men's teams.")
+    if player.gender == PlayerProfile.GENDER_FEMALE and team.division != Team.DIVISION_WOMENS:
+        raise InvalidInput("Female players can only join women's teams.")
+
+
+def _legacy_slot_parts(starts_at, ends_at):
+    local_start = timezone.localtime(starts_at, CLUB_TIMEZONE)
+    local_end = timezone.localtime(ends_at, CLUB_TIMEZONE)
+    week_start = local_start.date() - timedelta(days=local_start.weekday())
+    day_value = list(AvailabilitySlot.DayOfWeek.values)[local_start.weekday()]
+    return week_start, day_value, local_start.time().replace(microsecond=0), local_end.time().replace(microsecond=0)
+
+
+def _make_aware(value):
+    if timezone.is_naive(value):
+        return timezone.make_aware(value, CLUB_TIMEZONE)
+    return value.astimezone(datetime_timezone.utc)
+
+
+def _intervals_overlap(starts_a, ends_a, starts_b, ends_b):
+    return starts_a < ends_b and ends_a > starts_b
+
+
+def _submission_score_signature(submission):
+    sets = list(submission.sets.order_by("set_order"))
+    if sets:
+        return tuple((item.set_order, item.set_type, item.team_a_score, item.team_b_score) for item in sets)
+    return (("legacy", submission.team_a_sets_won, submission.team_b_sets_won),)
+
+
+def _get_or_create_standing(team):
+    standing, _ = LadderStanding.objects.select_for_update().get_or_create(
+        team=team,
+        defaults={
+            "position": (LadderStanding.objects.aggregate(max_position=Max("position"))["max_position"] or 0) + 1,
+        },
+    )
+    return standing
+
+
+def request_membership_change(actor, player, target_team=None, action="join"):
+    if not getattr(actor, "is_authenticated", False):
+        raise AuthorizationFailure("Authentication is required.")
+    if not actor.is_staff and getattr(player, "user_id", None) != actor.id:
+        raise AuthorizationFailure("Players may only request changes for themselves.")
+
+    with transaction.atomic():
+        locked_player = PlayerProfile.objects.select_for_update().get(pk=player.pk)
+        current_active = (
+            TeamMembership.objects.select_for_update()
+            .filter(player=locked_player, status=TeamMembership.STATUS_ACTIVE)
+            .first()
+        )
+
+        if action == "request_removal":
+            if not current_active:
+                raise InvalidInput("Player does not have an active team membership.")
+            if current_active.removal_requested_at is None:
+                current_active.removal_requested_at = timezone.now()
+                current_active.save(update_fields=["removal_requested_at", "updated_at"])
+            return current_active
+
+        if action != "join":
+            raise InvalidInput("Unsupported membership action.")
+        if target_team is None:
+            raise InvalidInput("A target team is required.")
+        locked_team = Team.objects.select_for_update().get(pk=target_team.pk)
+        if locked_team.status != Team.STATUS_ACTIVE:
+            raise InvalidInput("Cannot join a retired team.")
+        if current_active:
+            if current_active.team_id == locked_team.id:
+                return current_active
+            raise InvalidInput("Player already has an active team membership.")
+
+        _validate_player_division(locked_player, locked_team)
+        active_count = (
+            TeamMembership.objects.select_for_update()
+            .filter(team=locked_team, status=TeamMembership.STATUS_ACTIVE)
+            .count()
+        )
+        legacy_count = locked_team.players.exclude(pk=locked_player.pk).count()
+        if max(active_count, legacy_count) >= 3:
+            raise InvalidInput("Team already has three active members.")
+
+        membership = TeamMembership.objects.create(
+            player=locked_player,
+            team=locked_team,
+            status=TeamMembership.STATUS_ACTIVE,
+            effective_from=timezone.now(),
+        )
+        locked_player.team = locked_team
+        locked_player.save(update_fields=["team"])
+        return membership
+
+
+def resolve_membership_request(admin_actor, membership, decision):
+    if not getattr(admin_actor, "is_staff", False):
+        raise AuthorizationFailure("Only administrators may resolve membership requests.")
+    if decision not in {"approve", "reject"}:
+        raise InvalidInput("Decision must be approve or reject.")
+
+    with transaction.atomic():
+        locked_membership = TeamMembership.objects.select_for_update().get(pk=membership.pk)
+        now = timezone.now()
+        locked_membership.reviewed_by = admin_actor
+        locked_membership.resolved_at = now
+        if decision == "approve":
+            locked_membership.status = TeamMembership.STATUS_INACTIVE
+            locked_membership.effective_to = now
+            locked_membership.player.team = None
+            locked_membership.player.save(update_fields=["team"])
+        locked_membership.save(
+            update_fields=["status", "effective_to", "reviewed_by", "resolved_at", "updated_at"]
+        )
+        return locked_membership
+
+
+def save_availability(actor, starts_at, ends_at):
+    player = _profile_for_user(actor)
+    starts_at = _make_aware(starts_at)
+    ends_at = _make_aware(ends_at)
+    if starts_at >= ends_at:
+        raise InvalidInput("Availability start must be before end.")
+
+    week_start, day_value, start_time, end_time = _legacy_slot_parts(starts_at, ends_at)
+    if start_time >= end_time:
+        raise InvalidInput("Availability windows must start and end on the same club-time day.")
+
+    with transaction.atomic():
+        active_slots = AvailabilitySlot.objects.select_for_update().filter(
+            player=player,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+            starts_at__isnull=False,
+            ends_at__isnull=False,
+        )
+        if active_slots.filter(starts_at=starts_at, ends_at=ends_at).exists():
+            return active_slots.get(starts_at=starts_at, ends_at=ends_at)
+        if active_slots.filter(starts_at__lt=ends_at, ends_at__gt=starts_at).exists():
+            raise InvalidInput("Availability overlaps an existing active window.")
+
+        return AvailabilitySlot.objects.create(
+            player=player,
+            week_start_date=week_start,
+            day_of_week=day_value,
+            start_time=start_time,
+            end_time=end_time,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+        )
+
+
+def cancel_availability(actor, availability):
+    player = _profile_for_user(actor)
+    with transaction.atomic():
+        slot = AvailabilitySlot.objects.select_for_update().get(pk=availability.pk)
+        if slot.player_id != player.id:
+            raise AuthorizationFailure("User cannot cancel another player's availability.")
+        if slot.status != AvailabilitySlot.STATUS_ACTIVE:
+            return slot
+        if slot.match_reservations.filter(status=MatchReservation.STATUS_ACTIVE).exists():
+            raise StaleState("Availability is reserved for a confirmed match.")
+        slot.status = AvailabilitySlot.STATUS_CANCELLED
+        slot.save(update_fields=["status"])
+        return slot
+
+
 def get_team_players(team: Team):
-    """Return all player profiles assigned to the given team."""
-    return team.players.all()
+    """Return active player profiles assigned to the given team."""
+    memberships = _active_memberships_for_team(team)
+    if memberships:
+        return PlayerProfile.objects.filter(id__in=[membership.player_id for membership in memberships]).order_by("id")
+    return team.players.order_by("id")
 
 
 def get_player_pairs(team: Team):
-    """Return all possible two-player pairings for a team."""
-    players = list(get_team_players(team))
-    return list(combinations(players, 2))
+    """Return all possible stable two-player pairings for a team."""
+    return list(combinations(list(get_team_players(team)), 2))
+
+
+def get_slot_key(slot):
+    """Return the values that define an exact legacy availability time."""
+    if slot.starts_at and slot.ends_at:
+        return (slot.starts_at, slot.ends_at)
+    return (slot.day_of_week, slot.start_time, slot.end_time)
 
 
 def get_pair_matching_slots(player_one: PlayerProfile, player_two: PlayerProfile, week_start_date):
-    """Return exact matching availability slots shared by two players in a week."""
-    player_one_slots = player_one.availability_slots.filter(week_start_date=week_start_date)
+    """Return exact matching legacy availability slots shared by two players in a week."""
+    player_one_slots = list(
+        player_one.availability_slots.filter(
+            week_start_date=week_start_date,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+        ).order_by("day_of_week", "start_time", "end_time", "id")
+    )
     player_two_slot_keys = {
         get_slot_key(slot)
-        for slot in player_two.availability_slots.filter(week_start_date=week_start_date)
+        for slot in player_two.availability_slots.filter(
+            week_start_date=week_start_date,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+        )
     }
-    matching_slots = []
-    for slot_one in player_one_slots:
-        if get_slot_key(slot_one) in player_two_slot_keys:
-            matching_slots.append(slot_one)
-
-    return matching_slots
+    return [slot_one for slot_one in player_one_slots if get_slot_key(slot_one) in player_two_slot_keys]
 
 
 def get_team_pair_availability(team: Team, week_start_date):
     result_list = []
-    team_pairs = get_player_pairs(team)
-
-    for player_one, player_two in team_pairs:
+    for player_one, player_two in get_player_pairs(team):
         matching_slots = get_pair_matching_slots(player_one, player_two, week_start_date)
         if matching_slots:
-            result_list.append(
-                {
-                    "players": (player_one, player_two),
-                    "slots": matching_slots,
-                }
-            )
+            result_list.append({"players": (player_one, player_two), "slots": matching_slots})
     return result_list
 
 
-def get_slot_key(slot):
-    """Return the values that define an exact availability time."""
-    return (slot.day_of_week, slot.start_time, slot.end_time)
+def _active_intervals_for_player(player, interval=None):
+    qs = player.availability_slots.filter(
+        status=AvailabilitySlot.STATUS_ACTIVE,
+        starts_at__isnull=False,
+        ends_at__isnull=False,
+    )
+    if interval:
+        qs = qs.filter(starts_at__lt=interval[1], ends_at__gt=interval[0])
+    return list(qs.order_by("starts_at", "ends_at", "id"))
+
+
+def _intersect_sorted_slots(slots_a, slots_b):
+    intersections = []
+    left = right = 0
+    while left < len(slots_a) and right < len(slots_b):
+        slot_a = slots_a[left]
+        slot_b = slots_b[right]
+        starts_at = max(slot_a.starts_at, slot_b.starts_at)
+        ends_at = min(slot_a.ends_at, slot_b.ends_at)
+        if starts_at < ends_at:
+            intersections.append((starts_at, ends_at, slot_a, slot_b))
+        if slot_a.ends_at <= slot_b.ends_at:
+            left += 1
+        else:
+            right += 1
+    return intersections
+
+
+def generate_team_lineups(team, interval=None):
+    lineups = []
+    for player_one, player_two in get_player_pairs(team):
+        slots_one = _active_intervals_for_player(player_one, interval)
+        slots_two = _active_intervals_for_player(player_two, interval)
+        for starts_at, ends_at, slot_one, slot_two in _intersect_sorted_slots(slots_one, slots_two):
+            lineups.append(
+                {
+                    "team": team,
+                    "players": tuple(sorted((player_one, player_two), key=lambda player: player.id)),
+                    "starts_at": starts_at,
+                    "ends_at": ends_at,
+                    "availability": {player_one.id: slot_one, player_two.id: slot_two},
+                }
+            )
+    return sorted(lineups, key=lambda item: (item["starts_at"], item["ends_at"], [p.id for p in item["players"]]))
 
 
 def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
+    if team_a.id == team_b.id or team_a.division != team_b.division:
+        return []
     match_options = []
     team_a_availability = get_team_pair_availability(team_a, week_start_date)
     team_b_availability = get_team_pair_availability(team_b, week_start_date)
@@ -63,8 +367,7 @@ def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
 
     for team_a_pair_availability in team_a_availability:
         for team_a_slot in team_a_pair_availability["slots"]:
-            matching_team_b_pairs = team_b_pairs_by_slot.get(get_slot_key(team_a_slot), [])
-            for team_b_players in matching_team_b_pairs:
+            for team_b_players in team_b_pairs_by_slot.get(get_slot_key(team_a_slot), []):
                 match_options.append(
                     {
                         "team_a_players": team_a_pair_availability["players"],
@@ -72,77 +375,442 @@ def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
                         "slot": team_a_slot,
                     }
                 )
-
     return match_options
 
 
-#Match Result confirmation logic 
-
-#Has anyone submitted?
-def get_submissions(match: Match):
-    return match.result_submissions.all()
-
-#Have both teams submitted?
-#def both_teams_submitted(match):
-#    submissions = get_submissions(match)
-#    return submissions.count() == 2
-
-def submissions_match(submission_one, submission_two):
-    return (
-        submission_one.team_a_sets_won == submission_two.team_a_sets_won
-        and submission_one.team_b_sets_won == submission_two.team_b_sets_won
+def find_opponent_suggestions(team, interval):
+    if interval[0] >= interval[1]:
+        raise InvalidInput("Search interval start must be before end.")
+    own_lineups = generate_team_lineups(team, interval)
+    opponents = Team.active.filter(division=team.division).exclude(pk=team.pk).order_by("id")
+    options = []
+    for opponent in opponents:
+        for own in own_lineups:
+            for other in generate_team_lineups(opponent, (own["starts_at"], own["ends_at"])):
+                starts_at = max(own["starts_at"], other["starts_at"])
+                ends_at = min(own["ends_at"], other["ends_at"])
+                if starts_at >= ends_at:
+                    continue
+                player_ids = [player.id for player in own["players"] + other["players"]]
+                if len(set(player_ids)) != 4:
+                    continue
+                if _has_reservation_conflict(player_ids, starts_at, ends_at):
+                    continue
+                options.append(
+                    {
+                        "team_a": team,
+                        "team_b": opponent,
+                        "team_a_players": own["players"],
+                        "team_b_players": other["players"],
+                        "starts_at": starts_at,
+                        "ends_at": ends_at,
+                        "availability": {**own["availability"], **other["availability"]},
+                    }
+                )
+    return sorted(
+        options,
+        key=lambda item: (
+            abs(getattr(item["team_a"], "standing", None).points - getattr(item["team_b"], "standing", None).points)
+            if hasattr(item["team_a"], "standing") and hasattr(item["team_b"], "standing")
+            else 0,
+            item["starts_at"],
+            item["team_b"].id,
+            [player.id for player in item["team_a_players"]],
+            [player.id for player in item["team_b_players"]],
+        ),
     )
 
-#Do both submissions agree?
-def get_match_status(match):
-    submissions = list(get_submissions(match))
 
+def create_match_suggestion(option, expires_at=None):
+    expires_at = expires_at or timezone.now() + DEFAULT_SUGGESTION_EXPIRY
+    with transaction.atomic():
+        suggestion = MatchSuggestion.objects.create(
+            team_a=option["team_a"],
+            team_b=option["team_b"],
+            starts_at=option["starts_at"],
+            ends_at=option["ends_at"],
+            expires_at=expires_at,
+        )
+        rows = []
+        for side, team_key, players_key in (
+            (SuggestionParticipant.SIDE_A, "team_a", "team_a_players"),
+            (SuggestionParticipant.SIDE_B, "team_b", "team_b_players"),
+        ):
+            for order, player in enumerate(option[players_key], start=1):
+                rows.append(
+                    SuggestionParticipant(
+                        suggestion=suggestion,
+                        team=option[team_key],
+                        player=player,
+                        side=side,
+                        lineup_order=order,
+                    )
+                )
+        SuggestionParticipant.objects.bulk_create(rows)
+        return suggestion
+
+
+def _has_reservation_conflict(player_ids, starts_at, ends_at):
+    return MatchReservation.objects.filter(
+        player_id__in=player_ids,
+        status=MatchReservation.STATUS_ACTIVE,
+        starts_at__lt=ends_at,
+        ends_at__gt=starts_at,
+    ).exists()
+
+
+def _players_for_suggestion(suggestion):
+    participants = list(
+        suggestion.participants.select_related("player", "team").order_by("side", "lineup_order", "player_id")
+    )
+    by_side = defaultdict(list)
+    for participant in participants:
+        by_side[participant.side].append(participant)
+    if len(by_side[SuggestionParticipant.SIDE_A]) != 2 or len(by_side[SuggestionParticipant.SIDE_B]) != 2:
+        raise InvalidInput("Suggestion must have exactly two players per side.")
+    player_ids = [participant.player_id for participant in participants]
+    if len(set(player_ids)) != 4:
+        raise InvalidInput("Suggestion must have four distinct players.")
+    return by_side
+
+
+def _availability_covering(player, starts_at, ends_at):
+    return (
+        AvailabilitySlot.objects.select_for_update()
+        .filter(
+            player=player,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+            starts_at__lte=starts_at,
+            ends_at__gte=ends_at,
+        )
+        .order_by("starts_at", "ends_at", "id")
+        .first()
+    )
+
+
+def accept_suggestion(actor, suggestion, expected_version):
+    actor_profile = _profile_for_user(actor)
+    with transaction.atomic():
+        locked = (
+            MatchSuggestion.objects.select_for_update()
+            .select_related("team_a", "team_b")
+            .get(pk=suggestion.pk)
+        )
+        if locked.version != expected_version:
+            raise StaleState("Suggestion version is stale.")
+        if locked.status in {MatchSuggestion.STATUS_EXPIRED, MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED}:
+            raise StaleState("Suggestion is no longer acceptible.")
+        if locked.expires_at <= timezone.now():
+            locked.status = MatchSuggestion.STATUS_EXPIRED
+            locked.save(update_fields=["status", "updated_at"])
+            raise StaleState("Suggestion has expired.")
+
+        actor_team = _active_team_for_player(actor_profile)
+        if actor_team not in {locked.team_a, locked.team_b}:
+            raise AuthorizationFailure("User cannot accept for this suggestion.")
+
+        acceptance, _ = SuggestionAcceptance.objects.get_or_create(
+            suggestion=locked,
+            team=actor_team,
+            defaults={"accepted_by": actor, "accepted_version": expected_version},
+        )
+        if acceptance.accepted_version != expected_version:
+            raise StaleState("Existing acceptance is for a stale suggestion version.")
+
+        accepted_team_ids = set(locked.acceptances.select_for_update().values_list("team_id", flat=True))
+        required_team_ids = {locked.team_a_id, locked.team_b_id}
+        if accepted_team_ids != required_team_ids:
+            locked.status = MatchSuggestion.STATUS_PARTIALLY_ACCEPTED
+            locked.save(update_fields=["status", "updated_at"])
+            return locked
+        return _confirm_suggestion_locked(locked)
+
+
+def _confirm_suggestion_locked(suggestion):
+    if hasattr(suggestion, "confirmed_match"):
+        return suggestion.confirmed_match
+
+    if suggestion.team_a.division != suggestion.team_b.division:
+        raise InvalidInput("Teams must be in the same division.")
+    by_side = _players_for_suggestion(suggestion)
+    participants = by_side[SuggestionParticipant.SIDE_A] + by_side[SuggestionParticipant.SIDE_B]
+    player_ids = [participant.player_id for participant in participants]
+
+    for participant in participants:
+        if not _player_belongs_to_team(participant.player, participant.team):
+            raise StaleState("A suggested player is no longer active on the suggested team.")
+    if _has_reservation_conflict(player_ids, suggestion.starts_at, suggestion.ends_at):
+        raise BookingCollision("One or more players already has a reservation for this window.")
+
+    availability_by_player = {}
+    for participant in participants:
+        availability = _availability_covering(participant.player, suggestion.starts_at, suggestion.ends_at)
+        if availability is None:
+            raise BookingCollision("Required availability is no longer active.")
+        availability_by_player[participant.player_id] = availability
+
+    week_start, day_value, start_time, end_time = _legacy_slot_parts(suggestion.starts_at, suggestion.ends_at)
+    match = Match.objects.create(
+        team_a=suggestion.team_a,
+        team_b=suggestion.team_b,
+        source_suggestion=suggestion,
+        scheduled_week_start_date=week_start,
+        scheduled_day_of_week=day_value,
+        scheduled_start_time=start_time,
+        scheduled_end_time=end_time,
+        scheduled_starts_at=suggestion.starts_at,
+        scheduled_ends_at=suggestion.ends_at,
+    )
+    for participant in participants:
+        side = MatchParticipant.SIDE_A if participant.side == SuggestionParticipant.SIDE_A else MatchParticipant.SIDE_B
+        MatchParticipant.objects.create(
+            match=match,
+            team=participant.team,
+            player=participant.player,
+            side=side,
+            lineup_order=participant.lineup_order,
+        )
+        availability = availability_by_player[participant.player_id]
+        MatchReservation.objects.create(
+            match=match,
+            player=participant.player,
+            availability=availability,
+            starts_at=suggestion.starts_at,
+            ends_at=suggestion.ends_at,
+        )
+        availability.status = AvailabilitySlot.STATUS_CONSUMED
+        availability.save(update_fields=["status"])
+
+    suggestion.status = MatchSuggestion.STATUS_CONFIRMED
+    suggestion.save(update_fields=["status", "updated_at"])
+    return match
+
+
+def validate_regular_set(team_a_games, team_b_games):
+    if not isinstance(team_a_games, int) or not isinstance(team_b_games, int):
+        raise InvalidInput("Set scores must be integers.")
+    if team_a_games < 0 or team_b_games < 0 or team_a_games == team_b_games:
+        raise InvalidInput("Regular set scores must be non-negative and cannot be tied.")
+    high = max(team_a_games, team_b_games)
+    low = min(team_a_games, team_b_games)
+    if high == 6 and low <= 4:
+        return 1 if team_a_games > team_b_games else 2
+    if high == 7 and low in {5, 6}:
+        return 1 if team_a_games > team_b_games else 2
+    raise InvalidInput("Invalid regular set score.")
+
+
+def validate_match_tiebreak(team_a_points, team_b_points):
+    if not isinstance(team_a_points, int) or not isinstance(team_b_points, int):
+        raise InvalidInput("Tie-break scores must be integers.")
+    if team_a_points < 0 or team_b_points < 0 or team_a_points == team_b_points:
+        raise InvalidInput("Tie-break scores must be non-negative and cannot be tied.")
+    if max(team_a_points, team_b_points) < 10 or abs(team_a_points - team_b_points) < 2:
+        raise InvalidInput("A deciding match tie-break must be at least 10 points and won by two.")
+    return 1 if team_a_points > team_b_points else 2
+
+
+def validate_match_score(sets):
+    normalized = []
+    team_a_sets = 0
+    team_b_sets = 0
+    if len(sets) not in {2, 3}:
+        raise InvalidInput("A match score must contain two or three sets.")
+
+    first_two = sets[:2]
+    for index, item in enumerate(first_two, start=1):
+        a_score, b_score = _extract_scores(item)
+        winner = validate_regular_set(a_score, b_score)
+        team_a_sets += 1 if winner == 1 else 0
+        team_b_sets += 1 if winner == 2 else 0
+        normalized.append(
+            {"set_order": index, "set_type": MatchResultSet.SET_TYPE_REGULAR, "team_a_score": a_score, "team_b_score": b_score}
+        )
+
+    if team_a_sets == 2 or team_b_sets == 2:
+        if len(sets) != 2:
+            raise InvalidInput("A deciding match tie-break is not allowed after a straight-set win.")
+        winning_side = 1 if team_a_sets == 2 else 2
+    else:
+        if len(sets) != 3:
+            raise InvalidInput("Split regular sets require a deciding match tie-break.")
+        a_score, b_score = _extract_scores(sets[2])
+        winning_side = validate_match_tiebreak(a_score, b_score)
+        normalized.append(
+            {
+                "set_order": 3,
+                "set_type": MatchResultSet.SET_TYPE_MATCH_TIEBREAK,
+                "team_a_score": a_score,
+                "team_b_score": b_score,
+            }
+        )
+
+    winner_team_side = "team_a" if winning_side == 1 else "team_b"
+    return {
+        "sets": normalized,
+        "team_a_sets_won": 2 if winner_team_side == "team_a" else 1 if len(normalized) == 3 else 0,
+        "team_b_sets_won": 2 if winner_team_side == "team_b" else 1 if len(normalized) == 3 else 0,
+        "winner_team_side": winner_team_side,
+    }
+
+
+def _extract_scores(item):
+    if isinstance(item, dict):
+        return item.get("team_a_score"), item.get("team_b_score")
+    if isinstance(item, (tuple, list)) and len(item) == 2:
+        return item[0], item[1]
+    raise InvalidInput("Malformed set score.")
+
+
+def submit_match_result(actor, match, normalized_sets):
+    actor_profile = _profile_for_user(actor)
+    score = validate_match_score(normalized_sets)
+    with transaction.atomic():
+        locked_match = Match.objects.select_for_update().select_related("team_a", "team_b").get(pk=match.pk)
+        if locked_match.status != Match.STATUS_SCHEDULED:
+            raise StaleState("Only scheduled matches can receive scores.")
+        submitting_team = _active_team_for_player(actor_profile)
+        if submitting_team not in {locked_match.team_a, locked_match.team_b}:
+            raise AuthorizationFailure("User cannot submit a result for this match.")
+
+        submission, created = MatchResultSubmission.objects.select_for_update().get_or_create(
+            match=locked_match,
+            submitting_team=submitting_team,
+            defaults={
+                "submitting_user": actor,
+                "team_a_sets_won": score["team_a_sets_won"],
+                "team_b_sets_won": score["team_b_sets_won"],
+            },
+        )
+        new_signature = tuple(
+            (item["set_order"], item["set_type"], item["team_a_score"], item["team_b_score"])
+            for item in score["sets"]
+        )
+        if not created:
+            if _submission_score_signature(submission) == new_signature:
+                return submission
+            raise StaleState("A different score has already been submitted by this team.")
+
+        MatchResultSet.objects.bulk_create(
+            [
+                MatchResultSet(
+                    submission=submission,
+                    set_order=item["set_order"],
+                    set_type=item["set_type"],
+                    team_a_score=item["team_a_score"],
+                    team_b_score=item["team_b_score"],
+                )
+                for item in score["sets"]
+            ]
+        )
+        if get_match_status(locked_match) == "confirmed":
+            finalize_match_result(locked_match)
+        elif get_match_status(locked_match) == "conflict":
+            create_admin_notification_for_conflict(locked_match)
+        return submission
+
+
+def get_submissions(match: Match):
+    return match.result_submissions.select_related("submitting_team").prefetch_related("sets")
+
+
+def submissions_match(submission_one, submission_two):
+    return _submission_score_signature(submission_one) == _submission_score_signature(submission_two)
+
+
+def get_match_status(match):
+    submissions = list(get_submissions(match).order_by("submitting_team_id"))
     if len(submissions) < 2:
-         return "waiting_for_submissions"
+        return "waiting_for_submissions"
     if submissions_match(submissions[0], submissions[1]):
         return "confirmed"
-
     return "conflict"
-    
 
 
 def create_admin_notification_for_conflict(match):
-    status = get_match_status(match)
-    if status != "conflict":
+    if get_match_status(match) != "conflict":
         return None
-    
-    return AdminNotification.objects.create(
+    notification, _ = AdminNotification.objects.get_or_create(
         match=match,
-        message="Result submissions do not match. Admin review is required.",
+        notification_type=AdminNotification.TYPE_SCORE_CONFLICT,
+        is_resolved=False,
+        defaults={"message": "Result submissions do not match. Admin review is required."},
     )
+    return notification
 
 
 def complete_match_if_result_confirmed(match):
-    status = get_match_status(match)
-
-    if status != "confirmed":
+    if get_match_status(match) != "confirmed":
         return False
-    
-    match.status = Match.STATUS_COMPLETED
-    match.save(update_fields=["status", "updated_at"])
+    finalize_match_result(match)
     return True
 
 
-def get_match_winner(match):
+def get_match_winner_and_loser(match):
     if get_match_status(match) != "confirmed":
-        return None
-    
-    submission = list(get_submissions(match))
-    submission = submission[0]
-
+        return []
+    submission = list(get_submissions(match).order_by("submitting_team_id"))[0]
+    if submission.sets.exists():
+        score = validate_match_score(
+            [(item.team_a_score, item.team_b_score) for item in submission.sets.order_by("set_order")]
+        )
+        return [match.team_a, match.team_b] if score["winner_team_side"] == "team_a" else [match.team_b, match.team_a]
     if submission.team_a_sets_won > submission.team_b_sets_won:
-        return match.team_a
-    
+        return [match.team_a, match.team_b]
     if submission.team_a_sets_won < submission.team_b_sets_won:
-        return match.team_b
-    
-    return None
+        return [match.team_b, match.team_a]
+    return []
 
 
-    
-    
+def finalize_match_result(match):
+    with transaction.atomic():
+        locked_match = Match.objects.select_for_update().select_related("team_a", "team_b").get(pk=match.pk)
+        if hasattr(locked_match, "confirmed_result"):
+            return locked_match.confirmed_result
+        if get_match_status(locked_match) != "confirmed":
+            raise StaleState("Match result is not confirmed.")
+
+        winner, loser = get_match_winner_and_loser(locked_match)
+        if not winner or winner == loser:
+            raise InvalidInput("Match must have exactly one winner.")
+        submission = list(get_submissions(locked_match).order_by("submitting_team_id"))[0]
+
+        winner_standing = _get_or_create_standing(winner)
+        loser_standing = _get_or_create_standing(loser)
+        winner_ledger, winner_created = PointLedger.objects.get_or_create(
+            match=locked_match,
+            team=winner,
+            reason="match_result",
+            defaults={"points_delta": WIN_POINTS},
+        )
+        loser_ledger, loser_created = PointLedger.objects.get_or_create(
+            match=locked_match,
+            team=loser,
+            reason="match_result",
+            defaults={"points_delta": 0},
+        )
+        if winner_created and loser_created:
+            winner_standing.matches_played += 1
+            winner_standing.wins += 1
+            winner_standing.points += WIN_POINTS
+            loser_standing.matches_played += 1
+            loser_standing.losses += 1
+            winner_standing.save(update_fields=["matches_played", "wins", "points", "updated_at"])
+            loser_standing.save(update_fields=["matches_played", "losses", "updated_at"])
+
+        result = ConfirmedMatchResult.objects.create(
+            match=locked_match,
+            winning_team=winner,
+            losing_team=loser,
+            confirmed_from_submission=submission,
+        )
+        locked_match.status = Match.STATUS_COMPLETED
+        locked_match.save(update_fields=["status", "updated_at"])
+        return result
+
+
+def update_ladder_stats_for_match(match):
+    if get_match_status(match) != "confirmed":
+        return False
+    finalize_match_result(match)
+    return True
