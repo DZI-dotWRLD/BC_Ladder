@@ -204,10 +204,65 @@ def resolve_membership_request(admin_actor, membership, decision):
             locked_membership.effective_to = now
             locked_membership.player.team = None
             locked_membership.player.save(update_fields=["team"])
+        else:
+            locked_membership.removal_requested_at = None
         locked_membership.save(
-            update_fields=["status", "effective_to", "reviewed_by", "resolved_at", "updated_at"]
+            update_fields=[
+                "status",
+                "effective_to",
+                "removal_requested_at",
+                "reviewed_by",
+                "resolved_at",
+                "updated_at",
+            ]
         )
         return locked_membership
+
+
+def cancel_match(admin_actor, match):
+    if not getattr(admin_actor, "is_staff", False):
+        raise AuthorizationFailure("Only administrators may cancel matches.")
+    with transaction.atomic():
+        locked_match = Match.objects.select_for_update().get(pk=match.pk)
+        if locked_match.status == Match.STATUS_COMPLETED:
+            raise StaleState("Completed matches cannot be cancelled.")
+        if locked_match.status == Match.STATUS_CANCELLED:
+            return locked_match
+
+        reservations = list(
+            locked_match.reservations.select_for_update()
+            .select_related("availability")
+            .filter(status=MatchReservation.STATUS_ACTIVE)
+        )
+        for reservation in reservations:
+            reservation.status = MatchReservation.STATUS_RELEASED
+            reservation.save(update_fields=["status"])
+            availability = reservation.availability
+            if availability and availability.status == AvailabilitySlot.STATUS_CONSUMED:
+                has_other_active = availability.match_reservations.exclude(pk=reservation.pk).filter(
+                    status=MatchReservation.STATUS_ACTIVE
+                ).exists()
+                if not has_other_active:
+                    availability.status = AvailabilitySlot.STATUS_ACTIVE
+                    availability.save(update_fields=["status"])
+
+        locked_match.status = Match.STATUS_CANCELLED
+        locked_match.save(update_fields=["status", "updated_at"])
+        return locked_match
+
+
+def resolve_score_conflict(admin_actor, notification):
+    if not getattr(admin_actor, "is_staff", False):
+        raise AuthorizationFailure("Only administrators may resolve score conflicts.")
+    with transaction.atomic():
+        locked_notification = AdminNotification.objects.select_for_update().get(pk=notification.pk)
+        if locked_notification.notification_type != AdminNotification.TYPE_SCORE_CONFLICT:
+            raise InvalidInput("Notification is not a score conflict.")
+        if locked_notification.is_resolved:
+            return locked_notification
+        locked_notification.is_resolved = True
+        locked_notification.save(update_fields=["is_resolved", "updated_at"])
+        return locked_notification
 
 
 def save_availability(actor, starts_at, ends_at):

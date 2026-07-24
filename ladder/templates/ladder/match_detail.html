@@ -6,7 +6,7 @@
 <h1>{{ match.team_a.name }} vs {{ match.team_b.name }}</h1>
 <section class="panel">
     <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A" }}</p>
-    <p>Status: {{ match.get_status_display }} · Result: {{ status }}</p>
+    <p><span class="status-pill">{{ match.get_status_display }}</span> <span class="status-pill">{{ status }}</span></p>
     <h2>Players</h2>
     {% for participant in match.participants.all %}
         <p>{{ participant.team.name }}: {{ participant.player.user.username }}</p>
@@ -17,16 +17,30 @@
 {% if match.status == "scheduled" %}
     <section class="panel">
         <h2>Submit Score</h2>
+        <p class="muted">Enter two regular sets. Add the third set only when it is a deciding match tie-break.</p>
         <form method="post" action="{% url 'ladder:submit_score' match.id %}">
             {% csrf_token %}
-            <div class="score-grid">
-                <label>Set 1 {{ match.team_a.name }} {{ score_form.set1_team_a }}</label>
-                <label>Set 1 {{ match.team_b.name }} {{ score_form.set1_team_b }}</label>
-                <label>Set 2 {{ match.team_a.name }} {{ score_form.set2_team_a }}</label>
-                <label>Set 2 {{ match.team_b.name }} {{ score_form.set2_team_b }}</label>
-                <label>TB {{ match.team_a.name }} {{ score_form.set3_team_a }}</label>
-                <label>TB {{ match.team_b.name }} {{ score_form.set3_team_b }}</label>
-            </div>
+            <fieldset class="score-fieldset">
+                <legend>Set 1</legend>
+                <div class="score-grid">
+                    <label>{{ match.team_a.name }} {{ score_form.set1_team_a }}</label>
+                    <label>{{ match.team_b.name }} {{ score_form.set1_team_b }}</label>
+                </div>
+            </fieldset>
+            <fieldset class="score-fieldset">
+                <legend>Set 2</legend>
+                <div class="score-grid">
+                    <label>{{ match.team_a.name }} {{ score_form.set2_team_a }}</label>
+                    <label>{{ match.team_b.name }} {{ score_form.set2_team_b }}</label>
+                </div>
+            </fieldset>
+            <fieldset class="score-fieldset">
+                <legend>Match tie-break</legend>
+                <div class="score-grid">
+                    <label>{{ match.team_a.name }} {{ score_form.set3_team_a }}</label>
+                    <label>{{ match.team_b.name }} {{ score_form.set3_team_b }}</label>
+                </div>
+            </fieldset>
             <button type="submit">Submit score</button>
         </form>
     </section>

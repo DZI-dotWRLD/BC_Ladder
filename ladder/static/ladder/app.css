@@ -1,0 +1,305 @@
+:root {
+    color-scheme: light;
+    --ink: #101010;
+    --muted: #706a61;
+    --line: #d9d2c8;
+    --panel: #ffffff;
+    --bg: #f7f3ec;
+    --accent: #e50914;
+    --accent-dark: #b20710;
+    --danger: #7f1218;
+    --black: #050505;
+    --ivory: #fffaf2;
+    --focus: #e50914;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    font-family: Georgia, "Times New Roman", serif;
+    line-height: 1.45;
+}
+
+a {
+    color: var(--accent-dark);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+
+a:hover { color: var(--accent); }
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 3px;
+}
+
+.site-header {
+    background: var(--black);
+    color: #fff;
+    border-bottom: 4px solid var(--accent);
+}
+
+.wrap {
+    width: min(1120px, calc(100% - 32px));
+    margin: 0 auto;
+}
+
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px 0;
+}
+
+.brand {
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    font-size: 1.05rem;
+}
+
+.header-user {
+    color: #d8d2c8;
+    font: 600 .84rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin-top: 2px;
+}
+
+.main-nav {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px 14px;
+}
+
+.main-nav a,
+.logout-button {
+    color: #fff;
+    text-decoration: none;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    font: 700 .82rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    padding: 8px 0;
+    cursor: pointer;
+    min-height: 40px;
+}
+
+.main-nav a:hover,
+.logout-button:hover {
+    color: #ffeff0;
+    border-bottom-color: var(--accent);
+}
+
+.page-shell { padding: 30px 0 48px; }
+
+h1, h2, h3 {
+    margin: 0 0 12px;
+    line-height: 1.2;
+    font-weight: 500;
+}
+
+h1 {
+    font-size: clamp(2rem, 4vw, 3.4rem);
+    border-bottom: 2px solid var(--black);
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+}
+
+p { margin: 0 0 12px; }
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 16px;
+}
+
+.panel,
+.item {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 18px;
+    box-shadow: 0 10px 30px rgba(17, 17, 17, .05);
+}
+
+.item { margin-bottom: 12px; }
+
+.muted { color: var(--muted); }
+
+.eyebrow {
+    color: var(--muted);
+    font: 700 .78rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.status-pill {
+    display: inline-block;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    padding: 3px 8px;
+    background: var(--ivory);
+    font: 700 .76rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.empty-state {
+    border: 1px dashed var(--line);
+    background: var(--ivory);
+    padding: 16px;
+}
+
+.messages { margin-bottom: 18px; }
+
+.message {
+    padding: 10px 12px;
+    background: #fff7f7;
+    border: 1px solid #f1b7bb;
+    border-radius: 3px;
+    margin-bottom: 8px;
+}
+
+.message.error {
+    background: #fff0f1;
+    border-color: var(--accent);
+    color: var(--danger);
+}
+
+label {
+    display: block;
+    font: 700 .82rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin: 10px 0 4px;
+}
+
+input,
+select {
+    width: 100%;
+    max-width: 360px;
+    padding: 9px 10px;
+    border: 1px solid #a8a096;
+    border-radius: 2px;
+    background: #fff;
+    font: 1rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+.button {
+    display: inline-block;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 2px;
+    padding: 10px 14px;
+    font: 700 .85rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    text-decoration: none;
+    cursor: pointer;
+    min-height: 42px;
+}
+
+button:hover,
+.button:hover {
+    color: #fff;
+    background: var(--accent-dark);
+}
+
+.danger { background: var(--danger); }
+
+.secondary {
+    color: var(--black);
+    background: #fff;
+    border: 1px solid var(--black);
+}
+
+.secondary:hover {
+    color: #fff;
+    background: var(--black);
+}
+
+.table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    background: var(--panel);
+}
+
+table {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    background: var(--panel);
+}
+
+th,
+td {
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    padding: 11px 10px;
+}
+
+th {
+    background: var(--black);
+    color: #fff;
+    font: 700 .78rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+
+.inline-form { display: inline; }
+
+.score-fieldset {
+    border: 1px solid var(--line);
+    padding: 14px;
+    margin: 0 0 12px;
+}
+
+.score-fieldset legend {
+    font: 700 .78rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 0 6px;
+}
+
+.score-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(90px, 160px));
+    gap: 8px 14px;
+    max-width: 380px;
+}
+
+@media (max-width: 720px) {
+    .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .main-nav {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px 12px;
+        justify-content: stretch;
+    }
+
+    .main-nav a,
+    .logout-button {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+    }
+
+    input,
+    select { max-width: 100%; }
+}

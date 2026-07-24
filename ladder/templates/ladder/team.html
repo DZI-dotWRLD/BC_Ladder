@@ -16,6 +16,7 @@
             {% if membership and not membership.removal_requested_at %}
                 <form method="post" action="{% url 'ladder:request_team_removal' %}">
                     {% csrf_token %}
+                    <p class="muted">An administrator must approve removal before you can join another team.</p>
                     <button class="danger" type="submit">Request removal</button>
                 </form>
             {% elif membership and membership.removal_requested_at %}
@@ -28,6 +29,7 @@
     </section>
     {% if not team %}
         <section class="panel">
+            <div class="eyebrow">Membership</div>
             <h2>Join Team</h2>
             <form method="post" action="{% url 'ladder:join_team' %}">
                 {% csrf_token %}
