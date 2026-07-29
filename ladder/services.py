@@ -32,6 +32,8 @@ from .models import (
 CLUB_TIMEZONE = ZoneInfo("America/New_York")
 WIN_POINTS = 3
 DEFAULT_SUGGESTION_EXPIRY = timedelta(days=7)
+POSTGRES_AVAILABILITY_OVERLAP_CONSTRAINT = "availability_no_overlap_active_player"
+POSTGRES_RESERVATION_OVERLAP_CONSTRAINT = "reservation_no_overlap_active_player"
 
 
 class DomainError(Exception):
@@ -52,6 +54,12 @@ class AuthorizationFailure(DomainError):
 
 class BookingCollision(DomainError):
     pass
+
+
+def _integrity_constraint_name(error):
+    cause = getattr(error, "__cause__", None)
+    diagnostic = getattr(cause, "diag", None)
+    return getattr(diagnostic, "constraint_name", None)
 
 
 def _profile_for_user(user):
@@ -435,16 +443,25 @@ def save_availability(actor, starts_at, ends_at):
         if active_slots.filter(starts_at__lt=ends_at, ends_at__gt=starts_at).exists():
             raise InvalidInput("Availability overlaps an existing active window.")
 
-        return AvailabilitySlot.objects.create(
-            player=player,
-            week_start_date=week_start,
-            day_of_week=day_value,
-            start_time=start_time,
-            end_time=end_time,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            status=AvailabilitySlot.STATUS_ACTIVE,
-        )
+        try:
+            with transaction.atomic():
+                return AvailabilitySlot.objects.create(
+                    player=player,
+                    week_start_date=week_start,
+                    day_of_week=day_value,
+                    start_time=start_time,
+                    end_time=end_time,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    status=AvailabilitySlot.STATUS_ACTIVE,
+                )
+        except IntegrityError as exc:
+            existing = active_slots.filter(starts_at=starts_at, ends_at=ends_at).first()
+            if existing:
+                return existing
+            if _integrity_constraint_name(exc) == POSTGRES_AVAILABILITY_OVERLAP_CONSTRAINT:
+                raise InvalidInput("Availability overlaps an existing active window.") from exc
+            raise
 
 
 def cancel_availability(actor, availability):
@@ -806,13 +823,19 @@ def _confirm_suggestion_locked(suggestion):
             lineup_order=participant.lineup_order,
         )
         availability = availability_by_player[participant.player_id]
-        MatchReservation.objects.create(
-            match=match,
-            player=participant.player,
-            availability=availability,
-            starts_at=suggestion.starts_at,
-            ends_at=suggestion.ends_at,
-        )
+        try:
+            with transaction.atomic():
+                MatchReservation.objects.create(
+                    match=match,
+                    player=participant.player,
+                    availability=availability,
+                    starts_at=suggestion.starts_at,
+                    ends_at=suggestion.ends_at,
+                )
+        except IntegrityError as exc:
+            if _integrity_constraint_name(exc) == POSTGRES_RESERVATION_OVERLAP_CONSTRAINT:
+                raise BookingCollision("One or more players already has a reservation for this window.") from exc
+            raise
         availability.status = AvailabilitySlot.STATUS_CONSUMED
         availability.save(update_fields=["status"])
 

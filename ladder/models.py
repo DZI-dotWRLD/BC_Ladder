@@ -240,7 +240,10 @@ class AvailabilitySlot(models.Model):
                 name="unique_active_player_availability_interval",
             ),
             models.CheckConstraint(
-                condition=Q(starts_at__isnull=True) | Q(ends_at__isnull=True) | Q(starts_at__lt=F("ends_at")),
+                condition=(
+                    (Q(starts_at__isnull=True) & Q(ends_at__isnull=True))
+                    | (Q(starts_at__isnull=False) & Q(ends_at__isnull=False) & Q(starts_at__lt=F("ends_at")))
+                ),
                 name="availability_interval_valid",
             ),
         ]
@@ -254,6 +257,8 @@ class AvailabilitySlot(models.Model):
 
         if self.start_time >= self.end_time:
             raise ValidationError("Start time must be before end time.")
+        if bool(self.starts_at) != bool(self.ends_at):
+            raise ValidationError("Availability interval must include both start and end.")
         if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
             raise ValidationError("Availability start must be before end.")
 

@@ -56,4 +56,7 @@ $env:DJANGO_DB_PORT = "5432"
 ```
 
 GitHub Actions runs both SQLite and PostgreSQL jobs. PostgreSQL-specific
-concurrency tests skip automatically under SQLite.
+concurrency tests skip automatically under SQLite. PostgreSQL migrations install
+`btree_gist` and add exclusion constraints for overlapping active availability
+and active match reservations per player; SQLite keeps the application/service
+checks only.

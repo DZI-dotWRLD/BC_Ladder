@@ -360,6 +360,27 @@ class ModelValidationTests(TestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             AvailabilitySlot.objects.create(**slot_data)
 
+    def test_availability_interval_requires_both_timestamp_bounds(self):
+        player = self.create_player(
+            "half-null-availability-player",
+            PlayerProfile.GENDER_MALE,
+            self.mens_team,
+        )
+        slot_data = {
+            "player": player,
+            "week_start_date": self.week_start_date,
+            "day_of_week": AvailabilitySlot.DayOfWeek.MONDAY,
+            "start_time": time(18, 0),
+            "end_time": time(19, 0),
+            "starts_at": datetime(2026, 6, 1, 18, tzinfo=ZoneInfo("America/New_York")),
+            "ends_at": None,
+        }
+
+        with self.assertRaises(ValidationError):
+            AvailabilitySlot(**slot_data).full_clean()
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            AvailabilitySlot.objects.create(**slot_data)
+
 
 class ChallengeModelTests(TestCase):
     def setUp(self):

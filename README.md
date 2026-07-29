@@ -88,7 +88,11 @@ $env:DJANGO_DB_PORT = "5432"
 ```
 
 PostgreSQL-only concurrency tests are skipped under SQLite and run when
-`DJANGO_DB_ENGINE` points at PostgreSQL.
+`DJANGO_DB_ENGINE` points at PostgreSQL. PostgreSQL migrations also add database
+exclusion constraints that reject overlapping active availability and active
+match reservations for the same player. SQLite keeps service-level validation
+for local development, but PostgreSQL is the production correctness target for
+those race-sensitive rules.
 
 ## Environment Variables
 
@@ -114,7 +118,8 @@ Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 ## Current Limitations
 
 - SQLite is supported for local development. PostgreSQL is configured in CI for
-  production-style transaction and concurrency verification.
+  production-style transaction, range-overlap constraints, and concurrency
+  verification.
 - Players may self-register. Selected lineup players, not unrelated teammates,
   accept suggestions and submit scores.
 - Suggestions expire at the proposed match start time.
@@ -130,6 +135,8 @@ Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 
 - PostgreSQL deployment target and managed database selection.
 - Broader PostgreSQL-specific transaction/concurrency coverage.
+- Data audit before production migration to confirm no existing overlapping
+  active availability or active reservation rows.
 - Deployment secret management and production host configuration.
 - Static-file hosting.
 - HTTPS, secure cookies, trusted proxy settings, and staged HSTS.
