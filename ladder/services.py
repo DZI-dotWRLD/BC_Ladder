@@ -156,6 +156,25 @@ def _get_or_create_standing(team):
     return standing
 
 
+def _get_locked_standings_for_teams(*teams):
+    ordered_teams = sorted(teams, key=lambda team: team.id)
+    for team in ordered_teams:
+        LadderStanding.objects.get_or_create(
+            team=team,
+            defaults={
+                "position": (LadderStanding.objects.aggregate(max_position=Max("position"))["max_position"] or 0) + 1,
+            },
+        )
+    standings = {
+        standing.team_id: standing
+        for standing in LadderStanding.objects.select_for_update()
+        .filter(team__in=ordered_teams)
+        .select_related("team")
+        .order_by("team_id")
+    }
+    return {team.id: standings[team.id] for team in teams}
+
+
 def recalculate_ladder_positions(division):
     with transaction.atomic():
         standings = list(
@@ -313,13 +332,19 @@ def cancel_match(admin_actor, match):
 
         reservations = list(
             locked_match.reservations.select_for_update()
-            .select_related("availability")
             .filter(status=MatchReservation.STATUS_ACTIVE)
+            .order_by("player_id", "id")
         )
+        availability_by_id = {
+            availability.id: availability
+            for availability in AvailabilitySlot.objects.select_for_update().filter(
+                id__in=[reservation.availability_id for reservation in reservations if reservation.availability_id]
+            )
+        }
         for reservation in reservations:
             reservation.status = MatchReservation.STATUS_RELEASED
             reservation.save(update_fields=["status"])
-            availability = reservation.availability
+            availability = availability_by_id.get(reservation.availability_id)
             if availability and availability.status == AvailabilitySlot.STATUS_CONSUMED:
                 has_other_active = availability.match_reservations.exclude(pk=reservation.pk).filter(
                     status=MatchReservation.STATUS_ACTIVE
@@ -980,8 +1005,9 @@ def _winner_and_loser_from_submission(submission):
 
 
 def _decrement_standing_for_previous_result(result):
-    previous_winner = _get_or_create_standing(result.winning_team)
-    previous_loser = _get_or_create_standing(result.losing_team)
+    standings = _get_locked_standings_for_teams(result.winning_team, result.losing_team)
+    previous_winner = standings[result.winning_team_id]
+    previous_loser = standings[result.losing_team_id]
     previous_winner.matches_played = max(0, previous_winner.matches_played - 1)
     previous_winner.wins = max(0, previous_winner.wins - 1)
     previous_winner.points = max(0, previous_winner.points - WIN_POINTS)
@@ -992,8 +1018,9 @@ def _decrement_standing_for_previous_result(result):
 
 
 def _increment_standings_for_result(winner, loser):
-    winner_standing = _get_or_create_standing(winner)
-    loser_standing = _get_or_create_standing(loser)
+    standings = _get_locked_standings_for_teams(winner, loser)
+    winner_standing = standings[winner.id]
+    loser_standing = standings[loser.id]
     winner_standing.matches_played += 1
     winner_standing.wins += 1
     winner_standing.points += WIN_POINTS

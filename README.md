@@ -69,7 +69,26 @@ git diff --check
 ```
 
 GitHub Actions runs tests, Django checks, and migration consistency checks on
-pushes and pull requests.
+pushes and pull requests against both SQLite and PostgreSQL.
+
+## PostgreSQL Local Verification
+
+SQLite remains the default for local development. To run against PostgreSQL,
+create a database and set:
+
+```powershell
+$env:DJANGO_DB_ENGINE = "django.db.backends.postgresql"
+$env:DJANGO_DB_NAME = "bc_ladder"
+$env:DJANGO_DB_USER = "bc_ladder"
+$env:DJANGO_DB_PASSWORD = "<password>"
+$env:DJANGO_DB_HOST = "localhost"
+$env:DJANGO_DB_PORT = "5432"
+.\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\python.exe manage.py test
+```
+
+PostgreSQL-only concurrency tests are skipped under SQLite and run when
+`DJANGO_DB_ENGINE` points at PostgreSQL.
 
 ## Environment Variables
 
@@ -94,8 +113,8 @@ Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 
 ## Current Limitations
 
-- SQLite is supported for local development, but PostgreSQL is required before
-  production concurrency verification.
+- SQLite is supported for local development. PostgreSQL is configured in CI for
+  production-style transaction and concurrency verification.
 - Players may self-register. Selected lineup players, not unrelated teammates,
   accept suggestions and submit scores.
 - Suggestions expire at the proposed match start time.
@@ -109,8 +128,8 @@ Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 
 ## Phase B Checklist
 
-- PostgreSQL configuration and CI service database.
-- PostgreSQL-specific transaction/concurrency tests.
+- PostgreSQL deployment target and managed database selection.
+- Broader PostgreSQL-specific transaction/concurrency coverage.
 - Deployment secret management and production host configuration.
 - Static-file hosting.
 - HTTPS, secure cookies, trusted proxy settings, and staged HSTS.
