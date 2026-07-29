@@ -4,30 +4,32 @@
 
 {% block content %}
 <h1>{% if division == "mens" %}Men's{% else %}Women's{% endif %} Ladder</h1>
-<table>
-    <thead>
-        <tr>
-            <th>Rank</th>
-            <th>Team</th>
-            <th>Points</th>
-            <th>Wins</th>
-            <th>Losses</th>
-            <th>Played</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for standing in standings %}
+<div class="table-wrap" aria-label="Ladder standings">
+    <table>
+        <thead>
             <tr>
-                <td>{{ forloop.counter }}</td>
-                <td>{{ standing.team.name }}</td>
-                <td>{{ standing.points }}</td>
-                <td>{{ standing.wins }}</td>
-                <td>{{ standing.losses }}</td>
-                <td>{{ standing.matches_played }}</td>
+                <th>Rank</th>
+                <th>Team</th>
+                <th>Points</th>
+                <th>Wins</th>
+                <th>Losses</th>
+                <th>Played</th>
             </tr>
-        {% empty %}
-            <tr><td colspan="6">No standings yet.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
+        </thead>
+        <tbody>
+            {% for standing in standings %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ standing.team.name }}</td>
+                    <td>{{ standing.points }}</td>
+                    <td>{{ standing.wins }}</td>
+                    <td>{{ standing.losses }}</td>
+                    <td>{{ standing.matches_played }}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="6">No standings yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}

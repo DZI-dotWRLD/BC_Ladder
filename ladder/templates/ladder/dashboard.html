@@ -6,6 +6,7 @@
 <h1>Dashboard</h1>
 <div class="grid">
     <section class="panel">
+        <div class="eyebrow">Membership</div>
         <h2>Team</h2>
         {% if team %}
             <p>{{ team.name }} · {{ team.get_division_display }}</p>
@@ -16,29 +17,41 @@
         {% endif %}
     </section>
     <section class="panel">
+        <div class="eyebrow">Next windows</div>
         <h2>Availability</h2>
         {% for slot in availability %}
             <p>{{ slot.starts_at|date:"M j, Y g:i A" }} to {{ slot.ends_at|date:"g:i A" }}</p>
         {% empty %}
-            <p class="muted">No active availability.</p>
+            <div class="empty-state">
+                <p class="muted">No active availability.</p>
+                <a class="button secondary" href="{% url 'ladder:availability' %}">Add availability</a>
+            </div>
         {% endfor %}
         <a class="button" href="{% url 'ladder:availability' %}">Manage availability</a>
     </section>
     <section class="panel">
+        <div class="eyebrow">Matchmaking</div>
         <h2>Suggestions</h2>
         {% for suggestion in suggestions %}
             <p>{{ suggestion.team_a }} vs {{ suggestion.team_b }} · {{ suggestion.get_status_display }}</p>
         {% empty %}
-            <p class="muted">No current suggestions.</p>
+            <div class="empty-state">
+                <p class="muted">No current suggestions.</p>
+                <a class="button secondary" href="{% url 'ladder:suggestions' %}">Find opponents</a>
+            </div>
         {% endfor %}
         <a class="button" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
     </section>
     <section class="panel">
+        <div class="eyebrow">Schedule</div>
         <h2>Matches</h2>
         {% for match in matches %}
             <p><a href="{% url 'ladder:match_detail' match.id %}">{{ match.team_a }} vs {{ match.team_b }}</a></p>
         {% empty %}
-            <p class="muted">No matches yet.</p>
+            <div class="empty-state">
+                <p class="muted">No matches yet.</p>
+                <a class="button secondary" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
+            </div>
         {% endfor %}
     </section>
 </div>

@@ -18,16 +18,17 @@
         {% for slot in slots %}
             <div class="item">
                 <p>{{ slot.starts_at|date:"M j, Y g:i A" }} to {{ slot.ends_at|date:"g:i A" }}</p>
-                <p class="muted">{{ slot.get_status_display }}</p>
+                <p><span class="status-pill">{{ slot.get_status_display }}</span></p>
                 {% if slot.status == "active" %}
                     <form method="post" action="{% url 'ladder:cancel_availability' slot.id %}">
                         {% csrf_token %}
+                        <p class="muted">Cancelling removes this window from new suggestions.</p>
                         <button class="danger" type="submit">Cancel</button>
                     </form>
                 {% endif %}
             </div>
         {% empty %}
-            <p class="muted">No availability entered.</p>
+            <div class="empty-state"><p class="muted">No availability entered.</p></div>
         {% endfor %}
     </section>
 </div>

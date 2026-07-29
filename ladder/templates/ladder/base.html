@@ -1,173 +1,20 @@
+{% load static %}
 <!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}BC Ladder{% endblock %}</title>
-    <style>
-        :root {
-            color-scheme: light;
-            --ink: #111111;
-            --muted: #6f6a63;
-            --line: #d8d2c8;
-            --panel: #ffffff;
-            --bg: #f7f4ee;
-            --accent: #e50914;
-            --accent-dark: #b20710;
-            --danger: #7f1218;
-            --black: #050505;
-        }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            color: var(--ink);
-            background: var(--bg);
-            font-family: Georgia, "Times New Roman", serif;
-            line-height: 1.45;
-        }
-        header {
-            background: var(--black);
-            color: #fff;
-            border-bottom: 4px solid var(--accent);
-        }
-        .wrap {
-            width: min(1120px, calc(100% - 32px));
-            margin: 0 auto;
-        }
-        .topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            padding: 20px 0;
-        }
-        .brand {
-            letter-spacing: .08em;
-            text-transform: uppercase;
-            font-size: 1.05rem;
-        }
-        nav {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        nav a, .logout-button {
-            color: #fff;
-            text-decoration: none;
-            background: transparent;
-            border: 0;
-            font: 600 .88rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-            padding: 4px 0;
-            cursor: pointer;
-        }
-        nav a:hover, .logout-button:hover { color: #ffeff0; }
-        main { padding: 28px 0 44px; }
-        h1, h2, h3 {
-            margin: 0 0 12px;
-            line-height: 1.2;
-            font-weight: 500;
-        }
-        h1 {
-            font-size: clamp(2rem, 4vw, 3.4rem);
-            border-bottom: 2px solid var(--black);
-            padding-bottom: 10px;
-            margin-bottom: 18px;
-        }
-        p { margin: 0 0 12px; }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 16px;
-        }
-        .panel, .item {
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 3px;
-            padding: 18px;
-            box-shadow: 0 10px 30px rgba(17, 17, 17, .05);
-        }
-        .item { margin-bottom: 12px; }
-        .muted { color: var(--muted); }
-        .messages { margin-bottom: 18px; }
-        .message {
-            padding: 10px 12px;
-            background: #fff7f7;
-            border: 1px solid #f1b7bb;
-            border-radius: 3px;
-            margin-bottom: 8px;
-        }
-        .message.error { background: #fff0f1; border-color: #e50914; color: var(--danger); }
-        label {
-            display: block;
-            font: 700 .82rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-            margin: 10px 0 4px;
-        }
-        input, select {
-            width: 100%;
-            max-width: 360px;
-            padding: 8px 10px;
-            border: 1px solid #a8a096;
-            border-radius: 2px;
-            font: 1rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-        button, .button {
-            display: inline-block;
-            color: #fff;
-            background: var(--accent);
-            border: 0;
-            border-radius: 2px;
-            padding: 9px 14px;
-            font: 700 .85rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-            text-decoration: none;
-            cursor: pointer;
-        }
-        button:hover, .button:hover { background: var(--accent-dark); }
-        .danger { background: var(--danger); }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            background: var(--panel);
-            border: 1px solid var(--line);
-        }
-        th, td {
-            text-align: left;
-            border-bottom: 1px solid var(--line);
-            padding: 10px;
-        }
-        th {
-            background: var(--black);
-            color: #fff;
-            font: 700 .78rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-        }
-        .inline-form { display: inline; }
-        .score-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(80px, 140px));
-            gap: 8px 14px;
-            max-width: 340px;
-        }
-        @media (max-width: 680px) {
-            .topbar { align-items: flex-start; flex-direction: column; }
-            input, select { max-width: 100%; }
-        }
-    </style>
+    <link rel="stylesheet" href="{% static 'ladder/app.css' %}">
 </head>
 <body>
-    <header>
+    <header class="site-header">
         <div class="wrap topbar">
             <div>
                 <strong class="brand">BC Tennis Ladder</strong>
-                {% if user.is_authenticated %}<div class="muted">{{ user.username }}</div>{% endif %}
+                {% if user.is_authenticated %}<div class="header-user">{{ user.username }}</div>{% endif %}
             </div>
-            <nav aria-label="Main">
+            <nav class="main-nav" aria-label="Main">
                 {% if user.is_authenticated %}
                     <a href="{% url 'ladder:dashboard' %}">Dashboard</a>
                     <a href="{% url 'ladder:team' %}">Team</a>
@@ -186,7 +33,7 @@
             </nav>
         </div>
     </header>
-    <main class="wrap">
+    <main class="wrap page-shell">
         {% if messages %}
             <div class="messages">
                 {% for message in messages %}

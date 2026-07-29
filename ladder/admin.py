@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django.contrib import messages
+
+from .services import DomainError, cancel_match, resolve_membership_request, resolve_score_conflict
 
 from .models import (
     AdminNotification,
@@ -14,6 +17,7 @@ from .models import (
     MatchSuggestion,
     PlayerProfile,
     PointLedger,
+    ScoreCorrectionAudit,
     SuggestionAcceptance,
     SuggestionParticipant,
     Team,
@@ -42,6 +46,32 @@ class TeamMembershipAdmin(admin.ModelAdmin):
     list_filter = ("status", "team__division", "removal_requested_at")
     list_select_related = ("player__user", "team", "reviewed_by")
     readonly_fields = ("created_at", "updated_at", "effective_from", "effective_to", "reviewed_by", "resolved_at")
+    actions = ("approve_removal_requests", "reject_removal_requests")
+
+    @admin.action(description="Approve selected removal requests")
+    def approve_removal_requests(self, request, queryset):
+        completed = 0
+        for membership in queryset.filter(removal_requested_at__isnull=False):
+            try:
+                resolve_membership_request(request.user, membership, "approve")
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Approved {completed} removal request(s).")
+
+    @admin.action(description="Reject selected removal requests")
+    def reject_removal_requests(self, request, queryset):
+        completed = 0
+        for membership in queryset.filter(removal_requested_at__isnull=False):
+            try:
+                resolve_membership_request(request.user, membership, "reject")
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Rejected {completed} removal request(s).")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class LadderStandingAdmin(admin.ModelAdmin):
@@ -49,6 +79,9 @@ class LadderStandingAdmin(admin.ModelAdmin):
     ordering = ("position",)
     list_select_related = ("team",)
     readonly_fields = ("matches_played", "wins", "losses", "points", "updated_at")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class AvailabilitySlotAdmin(admin.ModelAdmin):
@@ -99,6 +132,21 @@ class MatchAdmin(admin.ModelAdmin):
     list_select_related = ("team_a", "team_b", "source_suggestion")
     readonly_fields = ("status", "source_suggestion", "created_at", "updated_at")
     ordering = ("scheduled_starts_at", "scheduled_week_start_date", "scheduled_day_of_week", "scheduled_start_time")
+    actions = ("cancel_selected_matches",)
+
+    @admin.action(description="Cancel selected scheduled matches")
+    def cancel_selected_matches(self, request, queryset):
+        completed = 0
+        for match in queryset:
+            try:
+                cancel_match(request.user, match)
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Cancelled {completed} match(es).")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_display = (
@@ -112,6 +160,25 @@ class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_filter = ("submitting_team", "created_at")
     list_select_related = ("match", "submitting_team", "submitting_user")
     readonly_fields = ("match", "submitting_team", "submitting_user", "team_a_sets_won", "team_b_sets_won", "created_at", "updated_at")
+    actions = ("use_selected_submission_as_official_score",)
+
+    @admin.action(description="Use selected submission as official score")
+    def use_selected_submission_as_official_score(self, request, queryset):
+        completed = 0
+        for submission in queryset.select_related("match"):
+            notification = submission.match.admin_notifications.filter(
+                notification_type=AdminNotification.TYPE_SCORE_CONFLICT,
+                is_resolved=False,
+            ).first()
+            if notification is None:
+                self.message_user(request, f"No unresolved score conflict for {submission.match}.", level=messages.ERROR)
+                continue
+            try:
+                resolve_score_conflict(request.user, notification, submission)
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Resolved {completed} score conflict(s).")
 
 
 class AdminNotificationAdmin(admin.ModelAdmin):
@@ -151,6 +218,9 @@ class MatchParticipantAdmin(admin.ModelAdmin):
     list_select_related = ("match", "team", "player__user")
     readonly_fields = ("match", "side", "lineup_order", "team", "player")
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class MatchReservationAdmin(admin.ModelAdmin):
     list_display = ("match", "player", "starts_at", "ends_at", "status")
@@ -158,11 +228,17 @@ class MatchReservationAdmin(admin.ModelAdmin):
     list_select_related = ("match", "player__user", "availability")
     readonly_fields = ("match", "player", "availability", "starts_at", "ends_at", "created_at")
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class MatchResultSetAdmin(admin.ModelAdmin):
     list_display = ("submission", "set_order", "set_type", "team_a_score", "team_b_score")
     list_select_related = ("submission",)
     readonly_fields = ("submission", "set_order", "set_type", "team_a_score", "team_b_score")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class ConfirmedMatchResultAdmin(admin.ModelAdmin):
@@ -170,11 +246,57 @@ class ConfirmedMatchResultAdmin(admin.ModelAdmin):
     list_select_related = ("match", "winning_team", "losing_team", "confirmed_from_submission")
     readonly_fields = ("match", "winning_team", "losing_team", "confirmed_from_submission", "confirmed_at")
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class PointLedgerAdmin(admin.ModelAdmin):
     list_display = ("match", "team", "points_delta", "reason", "created_at")
     list_select_related = ("match", "team")
     readonly_fields = ("match", "team", "points_delta", "reason", "created_at")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
+    list_display = (
+        "match",
+        "corrected_by",
+        "official_submission",
+        "previous_winning_team",
+        "new_winning_team",
+        "reason",
+        "created_at",
+    )
+    list_filter = ("reason", "created_at")
+    list_select_related = (
+        "match",
+        "corrected_by",
+        "official_submission",
+        "previous_winning_team",
+        "previous_losing_team",
+        "new_winning_team",
+        "new_losing_team",
+    )
+    readonly_fields = (
+        "match",
+        "corrected_by",
+        "official_submission",
+        "previous_winning_team",
+        "previous_losing_team",
+        "new_winning_team",
+        "new_losing_team",
+        "reason",
+        "note",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 
@@ -195,4 +317,5 @@ admin.site.register(MatchResultSubmission, MatchResultSubmissionAdmin)
 admin.site.register(MatchResultSet, MatchResultSetAdmin)
 admin.site.register(ConfirmedMatchResult, ConfirmedMatchResultAdmin)
 admin.site.register(PointLedger, PointLedgerAdmin)
+admin.site.register(ScoreCorrectionAudit, ScoreCorrectionAuditAdmin)
 admin.site.register(AdminNotification, AdminNotificationAdmin)

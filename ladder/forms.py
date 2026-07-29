@@ -1,4 +1,6 @@
 from django import forms
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import get_user_model
 
 from .models import PlayerProfile, Team
 from .services import CLUB_TIMEZONE
@@ -41,13 +43,23 @@ class ProfileSetupForm(forms.ModelForm):
         fields = ["gender"]
 
 
+class PlayerRegistrationForm(UserCreationForm):
+    gender = forms.ChoiceField(choices=PlayerProfile.GENDER_CHOICES)
+
+    class Meta:
+        model = get_user_model()
+        fields = ("username", "gender", "password1", "password2")
+
+
 class ScoreSubmissionForm(forms.Form):
-    set1_team_a = forms.IntegerField(min_value=0)
-    set1_team_b = forms.IntegerField(min_value=0)
-    set2_team_a = forms.IntegerField(min_value=0)
-    set2_team_b = forms.IntegerField(min_value=0)
-    set3_team_a = forms.IntegerField(min_value=0, required=False)
-    set3_team_b = forms.IntegerField(min_value=0, required=False)
+    score_widget = forms.NumberInput(attrs={"inputmode": "numeric", "min": "0"})
+
+    set1_team_a = forms.IntegerField(min_value=0, widget=score_widget)
+    set1_team_b = forms.IntegerField(min_value=0, widget=score_widget)
+    set2_team_a = forms.IntegerField(min_value=0, widget=score_widget)
+    set2_team_b = forms.IntegerField(min_value=0, widget=score_widget)
+    set3_team_a = forms.IntegerField(min_value=0, required=False, widget=score_widget)
+    set3_team_b = forms.IntegerField(min_value=0, required=False, widget=score_widget)
 
     def normalized_sets(self):
         sets = [

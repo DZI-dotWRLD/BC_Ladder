@@ -5,7 +5,10 @@
 {% block content %}
 <h1>Suggestions</h1>
 {% if not team %}
-    <section class="panel"><p class="muted">Join a team before reviewing suggestions.</p></section>
+    <section class="panel empty-state">
+        <p class="muted">Join a team before reviewing suggestions.</p>
+        <a class="button secondary" href="{% url 'ladder:team' %}">Go to team</a>
+    </section>
 {% else %}
     <div class="grid">
         <section class="panel">
@@ -22,6 +25,7 @@
                 </div>
             {% empty %}
                 <p class="muted">No compatible options in the next 30 days.</p>
+                <a class="button secondary" href="{% url 'ladder:availability' %}">Add availability</a>
             {% endfor %}
         </section>
         <section class="panel">
@@ -29,7 +33,8 @@
             {% for suggestion in existing %}
                 <div class="item">
                     <p>{{ suggestion.team_a.name }} vs {{ suggestion.team_b.name }}</p>
-                    <p class="muted">{{ suggestion.starts_at|date:"M j, Y g:i A" }} · {{ suggestion.get_status_display }}</p>
+                    <p class="muted">{{ suggestion.starts_at|date:"M j, Y g:i A" }}</p>
+                    <p><span class="status-pill">{{ suggestion.get_status_display }}</span></p>
                     {% if suggestion.status == "proposed" or suggestion.status == "partially_accepted" %}
                         <form method="post" action="{% url 'ladder:accept_suggestion' suggestion.id %}">
                             {% csrf_token %}

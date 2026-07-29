@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.contrib import messages
+from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
@@ -8,7 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
-from .forms import AvailabilityForm, ProfileSetupForm, ScoreSubmissionForm, TeamJoinForm
+from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamJoinForm
 from .models import (
     AvailabilitySlot,
     LadderStanding,
@@ -81,6 +82,19 @@ def _player_match_queryset(profile):
         .prefetch_related("participants__player__user", "result_submissions__sets")
         .order_by("-scheduled_starts_at", "-scheduled_week_start_date", "-scheduled_start_time")
     )
+
+
+def register(request):
+    if request.user.is_authenticated:
+        return redirect("ladder:dashboard")
+    form = PlayerRegistrationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        user = form.save()
+        PlayerProfile.objects.create(user=user, gender=form.cleaned_data["gender"])
+        login(request, user)
+        messages.success(request, "Account created.")
+        return redirect("ladder:dashboard")
+    return render(request, "registration/register.html", {"form": form})
 
 
 @login_required
@@ -323,6 +337,6 @@ def ladder(request, division):
     standings = (
         LadderStanding.objects.filter(team__division=division)
         .select_related("team")
-        .order_by("-points", "-wins", "position", "team__name")
+        .order_by("-points", "-wins", "losses", "team__name", "team_id")
     )
     return render(request, "ladder/ladder.html", {"division": division, "standings": standings})

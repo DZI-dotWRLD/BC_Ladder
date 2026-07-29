@@ -1,11 +1,14 @@
 from datetime import date, datetime, time, timedelta
+from io import StringIO
 from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from .models import (
     AdminNotification,
@@ -14,18 +17,22 @@ from .models import (
     ConfirmedMatchResult,
     LadderStanding,
     Match,
+    MatchParticipant,
     MatchReservation,
     MatchResultSubmission,
     MatchSuggestion,
     PlayerProfile,
     PointLedger,
+    ScoreCorrectionAudit,
     Team,
     TeamMembership,
 )
 from .services import (
     AuthorizationFailure,
     InvalidInput,
+    StaleState,
     accept_suggestion,
+    cancel_match,
     create_match_suggestion,
     find_team_match_options,
     find_opponent_suggestions,
@@ -40,8 +47,11 @@ from .services import (
     create_admin_notification_for_conflict,
     complete_match_if_result_confirmed,
     get_match_winner_and_loser,
+    recalculate_ladder_positions,
+    reconcile_ladder_standings,
     request_membership_change,
     resolve_membership_request,
+    resolve_score_conflict,
     save_availability,
     submit_match_result,
     validate_match_score,
@@ -901,6 +911,24 @@ class RemediationServiceTests(TestCase):
             players.append(profile)
         return team, players
 
+    def add_match_participants(self, match, team_a_players, team_b_players):
+        for order, player in enumerate(team_a_players, start=1):
+            MatchParticipant.objects.create(
+                match=match,
+                team=match.team_a,
+                player=player,
+                side=MatchParticipant.SIDE_A,
+                lineup_order=order,
+            )
+        for order, player in enumerate(team_b_players, start=1):
+            MatchParticipant.objects.create(
+                match=match,
+                team=match.team_b,
+                player=player,
+                side=MatchParticipant.SIDE_B,
+                lineup_order=order,
+            )
+
     def test_membership_join_enforces_one_active_team_and_three_member_limit(self):
         team, players = self.create_team_with_members("members", 3)
         other_team = Team.objects.create(name="other", division=Team.DIVISION_MENS)
@@ -979,6 +1007,36 @@ class RemediationServiceTests(TestCase):
         self.assertEqual(AvailabilitySlot.objects.filter(status=AvailabilitySlot.STATUS_CONSUMED).count(), 4)
         self.assertEqual(third_slot.status, AvailabilitySlot.STATUS_ACTIVE)
 
+    def test_non_lineup_teammate_cannot_accept_suggestion(self):
+        team_a, team_a_players = self.create_team_with_members("accept-auth-a", 3)
+        team_b, team_b_players = self.create_team_with_members("accept-auth-b", 2)
+        starts_at = self.make_dt(2026, 7, 8, 18)
+        ends_at = self.make_dt(2026, 7, 8, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 8, 1, tzinfo=self.club_tz))
+
+        with self.assertRaises(AuthorizationFailure):
+            accept_suggestion(team_a_players[2].user, suggestion, suggestion.version)
+
+    def test_duplicate_suggestion_returns_existing_active_suggestion(self):
+        team_a, team_a_players = self.create_team_with_members("suggest-dup-a", 2)
+        team_b, team_b_players = self.create_team_with_members("suggest-dup-b", 2)
+        starts_at = self.make_dt(2026, 7, 9, 18)
+        ends_at = self.make_dt(2026, 7, 9, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        first = create_match_suggestion(option)
+        second = create_match_suggestion(option)
+
+        self.assertEqual(first, second)
+        self.assertEqual(MatchSuggestion.objects.count(), 1)
+        self.assertEqual(first.expires_at, starts_at)
+
     def test_score_validation_accepts_match_tiebreak_and_rejects_ten_nine(self):
         for breaker in [(10, 8), (11, 9), (12, 10)]:
             score = validate_match_score([(6, 4), (4, 6), breaker])
@@ -990,7 +1048,7 @@ class RemediationServiceTests(TestCase):
             validate_match_score([(6, 4), (7, 5), (10, 8)])
 
     def test_score_submission_authorization_conflict_and_exactly_once_points(self):
-        team_a, team_a_players = self.create_team_with_members("score-a", 2)
+        team_a, team_a_players = self.create_team_with_members("score-a", 3)
         team_b, team_b_players = self.create_team_with_members("score-b", 2)
         _, outside_players = self.create_team_with_members("score-outside", 1)
         LadderStanding.objects.create(team=team_a, position=1)
@@ -1005,9 +1063,12 @@ class RemediationServiceTests(TestCase):
             scheduled_starts_at=self.make_dt(2026, 7, 6, 18),
             scheduled_ends_at=self.make_dt(2026, 7, 6, 20),
         )
+        self.add_match_participants(match, team_a_players[:2], team_b_players)
 
         with self.assertRaises(AuthorizationFailure):
             submit_match_result(outside_players[0].user, match, [(6, 4), (6, 4)])
+        with self.assertRaises(AuthorizationFailure):
+            submit_match_result(team_a_players[2].user, match, [(6, 4), (6, 4)])
 
         first = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
         duplicate = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
@@ -1033,6 +1094,46 @@ class RemediationServiceTests(TestCase):
         self.assertEqual(ConfirmedMatchResult.objects.count(), 1)
         self.assertEqual(PointLedger.objects.filter(match=match).count(), 2)
 
+    def test_ladder_positions_use_approved_tiebreak_order(self):
+        alpha = Team.objects.create(name="Alpha Club", division=Team.DIVISION_MENS)
+        beta = Team.objects.create(name="Beta Club", division=Team.DIVISION_MENS)
+        gamma = Team.objects.create(name="Gamma Club", division=Team.DIVISION_MENS)
+        LadderStanding.objects.create(team=gamma, position=1, points=6, wins=2, losses=2, matches_played=4)
+        LadderStanding.objects.create(team=beta, position=2, points=6, wins=2, losses=1, matches_played=3)
+        LadderStanding.objects.create(team=alpha, position=3, points=6, wins=2, losses=1, matches_played=3)
+
+        recalculate_ladder_positions(Team.DIVISION_MENS)
+
+        ordered = list(LadderStanding.objects.order_by("position").values_list("team__name", flat=True))
+        self.assertEqual(ordered, ["Alpha Club", "Beta Club", "Gamma Club"])
+
+    def test_reconcile_ladder_standings_rebuilds_stats_from_confirmed_results(self):
+        team_a, team_a_players = self.create_team_with_members("reconcile-a", 2)
+        team_b, team_b_players = self.create_team_with_members("reconcile-b", 2)
+        LadderStanding.objects.create(team=team_a, position=2, points=99, wins=10, losses=0, matches_played=10)
+        LadderStanding.objects.create(team=team_b, position=1, points=99, wins=10, losses=0, matches_played=10)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 7, 6),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2026, 7, 6, 18),
+            scheduled_ends_at=self.make_dt(2026, 7, 6, 20),
+        )
+        self.add_match_participants(match, team_a_players, team_b_players)
+        submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+        submit_match_result(team_b_players[0].user, match, [(6, 4), (6, 4)])
+
+        reconcile_ladder_standings(Team.DIVISION_MENS)
+        team_a.standing.refresh_from_db()
+        team_b.standing.refresh_from_db()
+
+        self.assertEqual((team_a.standing.matches_played, team_a.standing.wins, team_a.standing.losses, team_a.standing.points), (1, 1, 0, 3))
+        self.assertEqual((team_b.standing.matches_played, team_b.standing.wins, team_b.standing.losses, team_b.standing.points), (1, 0, 1, 0))
+        self.assertEqual(team_a.standing.position, 1)
+
 
 class PhaseARequestTests(TestCase):
     club_tz = ZoneInfo("America/New_York")
@@ -1053,6 +1154,24 @@ class PhaseARequestTests(TestCase):
             players.append(profile)
         return team, players
 
+    def add_match_participants(self, match, team_a_players, team_b_players):
+        for order, player in enumerate(team_a_players, start=1):
+            MatchParticipant.objects.create(
+                match=match,
+                team=match.team_a,
+                player=player,
+                side=MatchParticipant.SIDE_A,
+                lineup_order=order,
+            )
+        for order, player in enumerate(team_b_players, start=1):
+            MatchParticipant.objects.create(
+                match=match,
+                team=match.team_b,
+                player=player,
+                side=MatchParticipant.SIDE_B,
+                lineup_order=order,
+            )
+
     def test_dashboard_requires_login(self):
         response = self.client.get(reverse("ladder:dashboard"))
 
@@ -1068,6 +1187,22 @@ class PhaseARequestTests(TestCase):
         )
 
         self.assertRedirects(response, reverse("ladder:dashboard"))
+
+    def test_self_registration_creates_user_profile_and_logs_in(self):
+        response = self.client.post(
+            reverse("ladder:register"),
+            {
+                "username": "new-register",
+                "gender": PlayerProfile.GENDER_FEMALE,
+                "password1": "StrongPass123!",
+                "password2": "StrongPass123!",
+            },
+        )
+
+        user = get_user_model().objects.get(username="new-register")
+        self.assertRedirects(response, reverse("ladder:dashboard"))
+        self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
 
     def test_dashboard_redirects_user_without_profile_to_setup(self):
         user = get_user_model().objects.create_user(username="needs-profile", password="pass")
@@ -1179,6 +1314,7 @@ class PhaseARequestTests(TestCase):
             scheduled_starts_at=self.make_dt(2026, 7, 27, 18),
             scheduled_ends_at=self.make_dt(2026, 7, 27, 20),
         )
+        self.add_match_participants(match, team_a_players, team_b_players)
 
         self.client.force_login(outside_players[0].user)
         denied = self.client.get(reverse("ladder:match_detail", args=[match.id]))
@@ -1212,3 +1348,168 @@ class PhaseARequestTests(TestCase):
 
         self.assertContains(response, mens_team.name)
         self.assertNotContains(response, womens_team.name)
+
+
+class PhaseA5OperationsTests(TestCase):
+    club_tz = ZoneInfo("America/New_York")
+
+    def create_profile(self, username, gender=PlayerProfile.GENDER_MALE, is_staff=False):
+        user = get_user_model().objects.create_user(username=username, password="pass")
+        user.is_staff = is_staff
+        user.save(update_fields=["is_staff"])
+        return PlayerProfile.objects.create(user=user, gender=gender)
+
+    def create_team_with_members(self, name, count):
+        team = Team.objects.create(name=name, division=Team.DIVISION_MENS)
+        players = []
+        for index in range(1, count + 1):
+            profile = self.create_profile(f"{name}-{index}")
+            request_membership_change(profile.user, profile, team, "join")
+            players.append(profile)
+        return team, players
+
+    def add_match_participants(self, match, team_a_players, team_b_players):
+        for order, player in enumerate(team_a_players, start=1):
+            MatchParticipant.objects.create(
+                match=match,
+                team=match.team_a,
+                player=player,
+                side=MatchParticipant.SIDE_A,
+                lineup_order=order,
+            )
+        for order, player in enumerate(team_b_players, start=1):
+            MatchParticipant.objects.create(
+                match=match,
+                team=match.team_b,
+                player=player,
+                side=MatchParticipant.SIDE_B,
+                lineup_order=order,
+            )
+
+    def make_dt(self, year, month, day, hour):
+        return datetime(year, month, day, hour, tzinfo=self.club_tz)
+
+    def test_admin_can_reject_and_approve_removal_requests(self):
+        admin_profile = self.create_profile("ops-admin", is_staff=True)
+        team, players = self.create_team_with_members("ops-remove", 2)
+        first_request = request_membership_change(players[0].user, players[0], action="request_removal")
+
+        rejected = resolve_membership_request(admin_profile.user, first_request, "reject")
+        rejected.refresh_from_db()
+
+        self.assertEqual(rejected.status, TeamMembership.STATUS_ACTIVE)
+        self.assertIsNone(rejected.removal_requested_at)
+
+        second_request = request_membership_change(players[0].user, players[0], action="request_removal")
+        approved = resolve_membership_request(admin_profile.user, second_request, "approve")
+        players[0].refresh_from_db()
+
+        self.assertEqual(approved.status, TeamMembership.STATUS_INACTIVE)
+        self.assertIsNone(players[0].team)
+        self.assertTrue(TeamMembership.objects.filter(team=team, player=players[0]).exists())
+
+    def test_cancel_match_releases_reservations_and_restores_availability(self):
+        admin_profile = self.create_profile("cancel-admin", is_staff=True)
+        team_a, team_a_players = self.create_team_with_members("cancel-a", 2)
+        team_b, team_b_players = self.create_team_with_members("cancel-b", 2)
+        starts_at = self.make_dt(2026, 8, 3, 18)
+        ends_at = self.make_dt(2026, 8, 3, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2026, 8, 10, 18))
+        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
+        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+
+        cancelled = cancel_match(admin_profile.user, match)
+
+        self.assertEqual(cancelled.status, Match.STATUS_CANCELLED)
+        self.assertEqual(MatchReservation.objects.filter(match=match, status=MatchReservation.STATUS_RELEASED).count(), 4)
+        self.assertEqual(AvailabilitySlot.objects.filter(status=AvailabilitySlot.STATUS_ACTIVE).count(), 4)
+
+    def test_completed_match_cannot_be_cancelled(self):
+        admin_profile = self.create_profile("completed-admin", is_staff=True)
+        team_a, players_a = self.create_team_with_members("completed-a", 2)
+        team_b, players_b = self.create_team_with_members("completed-b", 2)
+        LadderStanding.objects.create(team=team_a, position=1)
+        LadderStanding.objects.create(team=team_b, position=2)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 8, 3),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2026, 8, 3, 18),
+            scheduled_ends_at=self.make_dt(2026, 8, 3, 20),
+        )
+        self.add_match_participants(match, players_a, players_b)
+        submit_match_result(players_a[0].user, match, [(6, 4), (6, 4)])
+        submit_match_result(players_b[0].user, match, [(6, 4), (6, 4)])
+
+        with self.assertRaises(StaleState):
+            cancel_match(admin_profile.user, match)
+
+    def test_admin_can_resolve_score_conflict_notification(self):
+        admin_profile = self.create_profile("conflict-admin", is_staff=True)
+        team_a, players_a = self.create_team_with_members("conflict-a", 2)
+        team_b, players_b = self.create_team_with_members("conflict-b", 2)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 8, 3),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2026, 8, 3, 18),
+            scheduled_ends_at=self.make_dt(2026, 8, 3, 20),
+        )
+        self.add_match_participants(match, players_a, players_b)
+        submit_match_result(players_a[0].user, match, [(6, 4), (6, 4)])
+        submit_match_result(players_b[0].user, match, [(4, 6), (4, 6)])
+        notification = AdminNotification.objects.get(match=match)
+        official_submission = MatchResultSubmission.objects.get(match=match, submitting_team=team_a)
+
+        audit = resolve_score_conflict(admin_profile.user, notification, official_submission)
+        notification.refresh_from_db()
+        match.refresh_from_db()
+
+        self.assertTrue(notification.is_resolved)
+        self.assertEqual(audit.official_submission, official_submission)
+        self.assertEqual(audit.new_winning_team, team_a)
+        self.assertEqual(match.status, Match.STATUS_COMPLETED)
+        self.assertEqual(ScoreCorrectionAudit.objects.count(), 1)
+        self.assertEqual(PointLedger.objects.filter(match=match).count(), 2)
+
+    def test_seed_demo_is_idempotent_and_populates_core_flows(self):
+        first_output = StringIO()
+        second_output = StringIO()
+
+        call_command("seed_demo", stdout=first_output)
+        counts_after_first = {
+            "users": get_user_model().objects.count(),
+            "profiles": PlayerProfile.objects.count(),
+            "teams": Team.objects.count(),
+            "memberships": TeamMembership.objects.count(),
+            "standings": LadderStanding.objects.count(),
+            "matches": Match.objects.count(),
+        }
+        call_command("seed_demo", stdout=second_output)
+
+        self.assertEqual(counts_after_first["users"], get_user_model().objects.count())
+        self.assertEqual(counts_after_first["profiles"], PlayerProfile.objects.count())
+        self.assertEqual(counts_after_first["teams"], Team.objects.count())
+        self.assertEqual(counts_after_first["memberships"], TeamMembership.objects.count())
+        self.assertEqual(counts_after_first["standings"], LadderStanding.objects.count())
+        self.assertEqual(counts_after_first["matches"], Match.objects.count())
+        self.assertGreaterEqual(Match.objects.count(), 2)
+        self.assertTrue(MatchSuggestion.objects.exists())
+        for standing in LadderStanding.objects.select_related("team"):
+            self.assertEqual(standing.matches_played, standing.wins + standing.losses)
+            self.assertEqual(standing.points, standing.wins * 3)
+
+        demo_mens_team = Team.objects.get(name="Men Demo Team 1")
+        starts_at = timezone.now()
+        ends_at = starts_at + timedelta(days=30)
+        self.assertTrue(find_opponent_suggestions(demo_mens_team, (starts_at, ends_at)))
+        self.assertIn("Demo data is ready", second_output.getvalue())
