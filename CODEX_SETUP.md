@@ -41,3 +41,19 @@ Start with a short staged value before considering a long preload duration.
 PostgreSQL is required before production concurrency verification. Configure it
 with `DJANGO_DB_ENGINE`, `DJANGO_DB_NAME`, `DJANGO_DB_USER`,
 `DJANGO_DB_PASSWORD`, `DJANGO_DB_HOST`, and `DJANGO_DB_PORT`.
+
+Example local PostgreSQL run:
+
+```powershell
+$env:DJANGO_DB_ENGINE = "django.db.backends.postgresql"
+$env:DJANGO_DB_NAME = "bc_ladder"
+$env:DJANGO_DB_USER = "bc_ladder"
+$env:DJANGO_DB_PASSWORD = "<password>"
+$env:DJANGO_DB_HOST = "localhost"
+$env:DJANGO_DB_PORT = "5432"
+.\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\python.exe manage.py test
+```
+
+GitHub Actions runs both SQLite and PostgreSQL jobs. PostgreSQL-specific
+concurrency tests skip automatically under SQLite.

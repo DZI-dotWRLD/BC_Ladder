@@ -8,8 +8,58 @@ on:
       - "agent/**"
 
 jobs:
-  test:
+  sqlite:
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: python manage.py test
+
+      - name: Run Django checks
+        run: python manage.py check
+
+      - name: Check migrations
+        run: python manage.py makemigrations --check --dry-run
+
+  postgres:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: bc_ladder_ci
+          POSTGRES_USER: bc_ladder
+          POSTGRES_PASSWORD: bc_ladder
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bc_ladder -d bc_ladder_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: bc_ladder_ci
+      DJANGO_DB_USER: bc_ladder
+      DJANGO_DB_PASSWORD: bc_ladder
+      DJANGO_DB_HOST: localhost
+      DJANGO_DB_PORT: "5432"
 
     steps:
       - name: Check out repository
