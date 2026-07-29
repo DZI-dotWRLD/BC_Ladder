@@ -627,6 +627,44 @@ class PointLedger(models.Model):
         indexes = [models.Index(fields=["team", "created_at"], name="point_ledger_team_created_idx")]
             
 
+class ScoreCorrectionAudit(models.Model):
+    REASON_CONFLICT_RESOLUTION = "conflict_resolution"
+    REASON_CHOICES = [(REASON_CONFLICT_RESOLUTION, "Conflict resolution")]
+
+    match = models.ForeignKey(Match, on_delete=models.PROTECT, related_name="score_correction_audits")
+    corrected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="score_correction_audits",
+    )
+    official_submission = models.ForeignKey(
+        MatchResultSubmission,
+        on_delete=models.PROTECT,
+        related_name="official_score_corrections",
+    )
+    previous_winning_team = models.ForeignKey(
+        Team,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="previous_score_correction_wins",
+    )
+    previous_losing_team = models.ForeignKey(
+        Team,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="previous_score_correction_losses",
+    )
+    new_winning_team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="score_correction_wins")
+    new_losing_team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="score_correction_losses")
+    reason = models.CharField(max_length=40, choices=REASON_CHOICES, default=REASON_CONFLICT_RESOLUTION)
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["match", "created_at"], name="score_audit_match_created_idx")]
+
 
 class AdminNotification(models.Model):
     TYPE_SCORE_CONFLICT = "score_conflict"

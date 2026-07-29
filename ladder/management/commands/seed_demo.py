@@ -5,7 +5,16 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from ladder.models import AvailabilitySlot, ConfirmedMatchResult, LadderStanding, Match, MatchSuggestion, PlayerProfile, Team
+from ladder.models import (
+    AvailabilitySlot,
+    ConfirmedMatchResult,
+    LadderStanding,
+    Match,
+    MatchParticipant,
+    MatchSuggestion,
+    PlayerProfile,
+    Team,
+)
 from ladder.services import (
     CLUB_TIMEZONE,
     InvalidInput,
@@ -49,7 +58,7 @@ class Command(BaseCommand):
 
         pending = self._pending_suggestion(mens_teams[0])
         scheduled = self._confirmed_match(mens_teams[0])
-        completed = self._completed_match(mens_teams[2], mens_teams[3], mens_players[4], mens_players[6])
+        completed = self._completed_match(mens_teams[2], mens_teams[3], mens_players[4:6], mens_players[6:8])
         self._refresh_standings(mens_teams)
         self._refresh_standings(womens_teams)
 
@@ -193,7 +202,7 @@ class Command(BaseCommand):
         if existing:
             return existing
         options = find_opponent_suggestions(team, (starts_at, ends_at))
-        return create_match_suggestion(options[0], expires_at=ends_at + timedelta(days=7)) if options else None
+        return create_match_suggestion(options[0]) if options else None
 
     def _confirmed_match(self, team):
         starts_at, ends_at = self._window(days_from_now=8, hour=19)
@@ -203,13 +212,13 @@ class Command(BaseCommand):
         options = find_opponent_suggestions(team, (starts_at, ends_at))
         if not options:
             return None
-        suggestion = create_match_suggestion(options[0], expires_at=ends_at + timedelta(days=7))
+        suggestion = create_match_suggestion(options[0])
         team_a_user = options[0]["team_a_players"][0].user
         team_b_user = options[0]["team_b_players"][0].user
         accept_suggestion(team_a_user, suggestion, suggestion.version)
         return accept_suggestion(team_b_user, suggestion, suggestion.version)
 
-    def _completed_match(self, team_a, team_b, team_a_submitter, team_b_submitter):
+    def _completed_match(self, team_a, team_b, team_a_players, team_b_players):
         starts_at, ends_at = self._window(days_from_now=3, hour=17)
         match, _ = Match.objects.get_or_create(
             team_a=team_a,
@@ -223,7 +232,30 @@ class Command(BaseCommand):
                 "scheduled_end_time": ends_at.time(),
             },
         )
+        self._ensure_match_participants(match, team_a_players, team_b_players)
         if match.status != Match.STATUS_COMPLETED:
-            submit_match_result(team_a_submitter.user, match, [(6, 4), (6, 4)])
-            submit_match_result(team_b_submitter.user, match, [(6, 4), (6, 4)])
+            submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+            submit_match_result(team_b_players[0].user, match, [(6, 4), (6, 4)])
         return match
+
+    def _ensure_match_participants(self, match, team_a_players, team_b_players):
+        for order, player in enumerate(team_a_players, start=1):
+            MatchParticipant.objects.get_or_create(
+                match=match,
+                player=player,
+                defaults={
+                    "team": match.team_a,
+                    "side": MatchParticipant.SIDE_A,
+                    "lineup_order": order,
+                },
+            )
+        for order, player in enumerate(team_b_players, start=1):
+            MatchParticipant.objects.get_or_create(
+                match=match,
+                player=player,
+                defaults={
+                    "team": match.team_b,
+                    "side": MatchParticipant.SIDE_B,
+                    "lineup_order": order,
+                },
+            )

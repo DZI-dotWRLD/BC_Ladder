@@ -1,4 +1,6 @@
 from django import forms
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import get_user_model
 
 from .models import PlayerProfile, Team
 from .services import CLUB_TIMEZONE
@@ -39,6 +41,14 @@ class ProfileSetupForm(forms.ModelForm):
     class Meta:
         model = PlayerProfile
         fields = ["gender"]
+
+
+class PlayerRegistrationForm(UserCreationForm):
+    gender = forms.ChoiceField(choices=PlayerProfile.GENDER_CHOICES)
+
+    class Meta:
+        model = get_user_model()
+        fields = ("username", "gender", "password1", "password2")
 
 
 class ScoreSubmissionForm(forms.Form):

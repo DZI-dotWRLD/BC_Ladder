@@ -17,6 +17,7 @@ from .models import (
     MatchSuggestion,
     PlayerProfile,
     PointLedger,
+    ScoreCorrectionAudit,
     SuggestionAcceptance,
     SuggestionParticipant,
     Team,
@@ -159,6 +160,25 @@ class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_filter = ("submitting_team", "created_at")
     list_select_related = ("match", "submitting_team", "submitting_user")
     readonly_fields = ("match", "submitting_team", "submitting_user", "team_a_sets_won", "team_b_sets_won", "created_at", "updated_at")
+    actions = ("use_selected_submission_as_official_score",)
+
+    @admin.action(description="Use selected submission as official score")
+    def use_selected_submission_as_official_score(self, request, queryset):
+        completed = 0
+        for submission in queryset.select_related("match"):
+            notification = submission.match.admin_notifications.filter(
+                notification_type=AdminNotification.TYPE_SCORE_CONFLICT,
+                is_resolved=False,
+            ).first()
+            if notification is None:
+                self.message_user(request, f"No unresolved score conflict for {submission.match}.", level=messages.ERROR)
+                continue
+            try:
+                resolve_score_conflict(request.user, notification, submission)
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Resolved {completed} score conflict(s).")
 
 
 class AdminNotificationAdmin(admin.ModelAdmin):
@@ -173,18 +193,6 @@ class AdminNotificationAdmin(admin.ModelAdmin):
     list_filter = ("notification_type", "is_resolved", "created_at")
     list_select_related = ("match",)
     ordering = ("is_resolved", "-created_at")
-    actions = ("resolve_selected_score_conflicts",)
-
-    @admin.action(description="Resolve selected score-conflict notifications")
-    def resolve_selected_score_conflicts(self, request, queryset):
-        completed = 0
-        for notification in queryset.filter(is_resolved=False):
-            try:
-                resolve_score_conflict(request.user, notification)
-                completed += 1
-            except DomainError as error:
-                self.message_user(request, str(error), level=messages.ERROR)
-        self.message_user(request, f"Resolved {completed} score conflict notification(s).")
 
 
 class MatchSuggestionAdmin(admin.ModelAdmin):
@@ -251,6 +259,46 @@ class PointLedgerAdmin(admin.ModelAdmin):
         return False
 
 
+class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
+    list_display = (
+        "match",
+        "corrected_by",
+        "official_submission",
+        "previous_winning_team",
+        "new_winning_team",
+        "reason",
+        "created_at",
+    )
+    list_filter = ("reason", "created_at")
+    list_select_related = (
+        "match",
+        "corrected_by",
+        "official_submission",
+        "previous_winning_team",
+        "previous_losing_team",
+        "new_winning_team",
+        "new_losing_team",
+    )
+    readonly_fields = (
+        "match",
+        "corrected_by",
+        "official_submission",
+        "previous_winning_team",
+        "previous_losing_team",
+        "new_winning_team",
+        "new_losing_team",
+        "reason",
+        "note",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 
 
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
@@ -269,4 +317,5 @@ admin.site.register(MatchResultSubmission, MatchResultSubmissionAdmin)
 admin.site.register(MatchResultSet, MatchResultSetAdmin)
 admin.site.register(ConfirmedMatchResult, ConfirmedMatchResultAdmin)
 admin.site.register(PointLedger, PointLedgerAdmin)
+admin.site.register(ScoreCorrectionAudit, ScoreCorrectionAuditAdmin)
 admin.site.register(AdminNotification, AdminNotificationAdmin)

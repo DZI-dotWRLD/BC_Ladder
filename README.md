@@ -46,6 +46,7 @@ instead of creating duplicates.
 
 ```text
 /accounts/login/
+/accounts/register/
 /profile/setup/
 /
 /team/
@@ -63,6 +64,7 @@ instead of creating duplicates.
 .\venv\Scripts\python.exe manage.py test
 .\venv\Scripts\python.exe manage.py check
 .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+.\venv\Scripts\python.exe manage.py reconcile_standings
 git diff --check
 ```
 
@@ -94,9 +96,14 @@ Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 
 - SQLite is supported for local development, but PostgreSQL is required before
   production concurrency verification.
-- Signup policy, captain role, notification channels, score corrections,
-  suggestion expiry policy, and equal-points ordering still need product
-  decisions.
+- Players may self-register. Selected lineup players, not unrelated teammates,
+  accept suggestions and submit scores.
+- Suggestions expire at the proposed match start time.
+- Equal-points ladder ordering is points, wins, fewer losses, then team name/id.
+- Score-conflict correction is admin-only through an audited official-submission
+  workflow.
+- Captain role, notification channels, and richer score-correction policy still
+  need product decisions before production.
 - The UI is server-rendered and intentionally lightweight. It is ready for club
   review, not final brand polish.
 

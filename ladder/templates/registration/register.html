@@ -1,0 +1,16 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Register | BC Ladder{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <h1>Create account</h1>
+    <p class="muted">Register as a player, then choose a team from your dashboard.</p>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Create account</button>
+    </form>
+    <p class="muted">Already registered? <a href="{% url 'ladder:login' %}">Log in</a>.</p>
+</section>
+{% endblock %}

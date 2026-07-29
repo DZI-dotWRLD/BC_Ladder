@@ -22,6 +22,7 @@ from .models import (
     MatchSuggestion,
     PlayerProfile,
     PointLedger,
+    ScoreCorrectionAudit,
     SuggestionAcceptance,
     SuggestionParticipant,
     Team,
@@ -91,6 +92,28 @@ def _player_belongs_to_team(player, team):
     return _active_team_for_player(player) == team
 
 
+def _suggestion_side_for_player(suggestion, player):
+    participant = (
+        suggestion.participants.select_related("team")
+        .filter(player=player)
+        .first()
+    )
+    if participant is None:
+        return None
+    return participant.team
+
+
+def _match_team_for_participant(match, player):
+    participant = (
+        match.participants.select_related("team")
+        .filter(player=player)
+        .first()
+    )
+    if participant:
+        return participant.team
+    return None
+
+
 def _validate_player_division(player, team):
     if player.gender == PlayerProfile.GENDER_MALE and team.division != Team.DIVISION_MENS:
         raise InvalidInput("Male players can only join men's teams.")
@@ -131,6 +154,65 @@ def _get_or_create_standing(team):
         },
     )
     return standing
+
+
+def recalculate_ladder_positions(division):
+    with transaction.atomic():
+        standings = list(
+            LadderStanding.objects.select_for_update()
+            .filter(team__division=division)
+            .select_related("team")
+        )
+        ordered = sorted(
+            standings,
+            key=lambda standing: (
+                -standing.points,
+                -standing.wins,
+                standing.losses,
+                standing.team.name.lower(),
+                standing.team_id,
+            ),
+        )
+        for position, standing in enumerate(ordered, start=1):
+            if standing.position != position:
+                standing.position = position
+                standing.save(update_fields=["position", "updated_at"])
+        return ordered
+
+
+def reconcile_ladder_standings(division=None):
+    teams = Team.objects.all()
+    if division:
+        teams = teams.filter(division=division)
+    teams = list(teams.order_by("division", "name", "id"))
+    team_ids = [team.id for team in teams]
+    stats = {
+        team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0}
+        for team in teams
+    }
+    results = ConfirmedMatchResult.objects.filter(
+        winning_team_id__in=team_ids,
+        losing_team_id__in=team_ids,
+    ).select_related("winning_team", "losing_team")
+    for result in results:
+        stats[result.winning_team_id]["matches_played"] += 1
+        stats[result.winning_team_id]["wins"] += 1
+        stats[result.winning_team_id]["points"] += WIN_POINTS
+        stats[result.losing_team_id]["matches_played"] += 1
+        stats[result.losing_team_id]["losses"] += 1
+
+    with transaction.atomic():
+        for team in teams:
+            standing = _get_or_create_standing(team)
+            standing.matches_played = stats[team.id]["matches_played"]
+            standing.wins = stats[team.id]["wins"]
+            standing.losses = stats[team.id]["losses"]
+            standing.points = stats[team.id]["points"]
+            standing.save(update_fields=["matches_played", "wins", "losses", "points", "updated_at"])
+        divisions = {team.division for team in teams}
+        for team_division in divisions:
+            recalculate_ladder_positions(team_division)
+    return stats
 
 
 def request_membership_change(actor, player, target_team=None, action="join"):
@@ -251,18 +333,58 @@ def cancel_match(admin_actor, match):
         return locked_match
 
 
-def resolve_score_conflict(admin_actor, notification):
+def resolve_score_conflict(admin_actor, notification, official_submission=None, note=""):
     if not getattr(admin_actor, "is_staff", False):
         raise AuthorizationFailure("Only administrators may resolve score conflicts.")
+    if official_submission is None:
+        raise InvalidInput("An official submission is required to resolve a score conflict.")
     with transaction.atomic():
-        locked_notification = AdminNotification.objects.select_for_update().get(pk=notification.pk)
+        locked_notification = (
+            AdminNotification.objects.select_for_update()
+            .select_related("match")
+            .get(pk=notification.pk)
+        )
         if locked_notification.notification_type != AdminNotification.TYPE_SCORE_CONFLICT:
             raise InvalidInput("Notification is not a score conflict.")
-        if locked_notification.is_resolved:
-            return locked_notification
+        locked_submission = (
+            MatchResultSubmission.objects.select_for_update()
+            .select_related("match", "submitting_team")
+            .prefetch_related("sets")
+            .get(pk=official_submission.pk)
+        )
+        if locked_submission.match_id != locked_notification.match_id:
+            raise InvalidInput("Official submission must belong to the notification match.")
+
+        existing_audit = ScoreCorrectionAudit.objects.filter(
+            match=locked_notification.match,
+            official_submission=locked_submission,
+            reason=ScoreCorrectionAudit.REASON_CONFLICT_RESOLUTION,
+        ).first()
+        if locked_notification.is_resolved and existing_audit:
+            return existing_audit
+
+        previous_result = getattr(locked_notification.match, "confirmed_result", None)
+        winner, loser = _winner_and_loser_from_submission(locked_submission)
+        _apply_official_result(
+            locked_notification.match,
+            locked_submission,
+            winner,
+            loser,
+            previous_result,
+        )
         locked_notification.is_resolved = True
         locked_notification.save(update_fields=["is_resolved", "updated_at"])
-        return locked_notification
+        return ScoreCorrectionAudit.objects.create(
+            match=locked_notification.match,
+            corrected_by=admin_actor,
+            official_submission=locked_submission,
+            previous_winning_team=previous_result.winning_team if previous_result else None,
+            previous_losing_team=previous_result.losing_team if previous_result else None,
+            new_winning_team=winner,
+            new_losing_team=loser,
+            reason=ScoreCorrectionAudit.REASON_CONFLICT_RESOLUTION,
+            note=note,
+        )
 
 
 def save_availability(actor, starts_at, ends_at):
@@ -476,9 +598,40 @@ def find_opponent_suggestions(team, interval):
     )
 
 
+def _participant_signature_for_option(option):
+    return {
+        SuggestionParticipant.SIDE_A: tuple(player.id for player in option["team_a_players"]),
+        SuggestionParticipant.SIDE_B: tuple(player.id for player in option["team_b_players"]),
+    }
+
+
+def _suggestion_participant_signature(suggestion):
+    signature = defaultdict(list)
+    for participant in suggestion.participants.order_by("side", "lineup_order", "player_id"):
+        signature[participant.side].append(participant.player_id)
+    return {side: tuple(player_ids) for side, player_ids in signature.items()}
+
+
 def create_match_suggestion(option, expires_at=None):
-    expires_at = expires_at or timezone.now() + DEFAULT_SUGGESTION_EXPIRY
+    expires_at = expires_at or option["starts_at"]
     with transaction.atomic():
+        option_signature = _participant_signature_for_option(option)
+        existing_suggestions = (
+            MatchSuggestion.objects.select_for_update()
+            .filter(
+                team_a=option["team_a"],
+                team_b=option["team_b"],
+                starts_at=option["starts_at"],
+                ends_at=option["ends_at"],
+                status__in=[MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED],
+            )
+            .prefetch_related("participants")
+            .order_by("id")
+        )
+        for existing in existing_suggestions:
+            if _suggestion_participant_signature(existing) == option_signature:
+                return existing
+
         suggestion = MatchSuggestion.objects.create(
             team_a=option["team_a"],
             team_b=option["team_b"],
@@ -560,7 +713,9 @@ def accept_suggestion(actor, suggestion, expected_version):
             locked.save(update_fields=["status", "updated_at"])
             raise StaleState("Suggestion has expired.")
 
-        actor_team = _active_team_for_player(actor_profile)
+        actor_team = _suggestion_side_for_player(locked, actor_profile)
+        if actor_team is None:
+            raise AuthorizationFailure("Only selected lineup players may accept this suggestion.")
         if actor_team not in {locked.team_a, locked.team_b}:
             raise AuthorizationFailure("User cannot accept for this suggestion.")
 
@@ -724,7 +879,9 @@ def submit_match_result(actor, match, normalized_sets):
         locked_match = Match.objects.select_for_update().select_related("team_a", "team_b").get(pk=match.pk)
         if locked_match.status != Match.STATUS_SCHEDULED:
             raise StaleState("Only scheduled matches can receive scores.")
-        submitting_team = _active_team_for_player(actor_profile)
+        submitting_team = _match_team_for_participant(locked_match, actor_profile)
+        if submitting_team is None:
+            raise AuthorizationFailure("Only selected match participants may submit a result.")
         if submitting_team not in {locked_match.team_a, locked_match.team_b}:
             raise AuthorizationFailure("User cannot submit a result for this match.")
 
@@ -805,16 +962,82 @@ def get_match_winner_and_loser(match):
     if get_match_status(match) != "confirmed":
         return []
     submission = list(get_submissions(match).order_by("submitting_team_id"))[0]
+    return list(_winner_and_loser_from_submission(submission))
+
+
+def _winner_and_loser_from_submission(submission):
+    match = submission.match
     if submission.sets.exists():
         score = validate_match_score(
             [(item.team_a_score, item.team_b_score) for item in submission.sets.order_by("set_order")]
         )
-        return [match.team_a, match.team_b] if score["winner_team_side"] == "team_a" else [match.team_b, match.team_a]
+        return (match.team_a, match.team_b) if score["winner_team_side"] == "team_a" else (match.team_b, match.team_a)
     if submission.team_a_sets_won > submission.team_b_sets_won:
-        return [match.team_a, match.team_b]
+        return (match.team_a, match.team_b)
     if submission.team_a_sets_won < submission.team_b_sets_won:
-        return [match.team_b, match.team_a]
-    return []
+        return (match.team_b, match.team_a)
+    raise InvalidInput("Match must have exactly one winner.")
+
+
+def _decrement_standing_for_previous_result(result):
+    previous_winner = _get_or_create_standing(result.winning_team)
+    previous_loser = _get_or_create_standing(result.losing_team)
+    previous_winner.matches_played = max(0, previous_winner.matches_played - 1)
+    previous_winner.wins = max(0, previous_winner.wins - 1)
+    previous_winner.points = max(0, previous_winner.points - WIN_POINTS)
+    previous_loser.matches_played = max(0, previous_loser.matches_played - 1)
+    previous_loser.losses = max(0, previous_loser.losses - 1)
+    previous_winner.save(update_fields=["matches_played", "wins", "points", "updated_at"])
+    previous_loser.save(update_fields=["matches_played", "losses", "updated_at"])
+
+
+def _increment_standings_for_result(winner, loser):
+    winner_standing = _get_or_create_standing(winner)
+    loser_standing = _get_or_create_standing(loser)
+    winner_standing.matches_played += 1
+    winner_standing.wins += 1
+    winner_standing.points += WIN_POINTS
+    loser_standing.matches_played += 1
+    loser_standing.losses += 1
+    winner_standing.save(update_fields=["matches_played", "wins", "points", "updated_at"])
+    loser_standing.save(update_fields=["matches_played", "losses", "updated_at"])
+
+
+def _apply_official_result(match, submission, winner, loser, previous_result=None):
+    if not winner or winner == loser:
+        raise InvalidInput("Match must have exactly one winner.")
+    if previous_result:
+        if previous_result.winning_team_id != winner.id or previous_result.losing_team_id != loser.id:
+            _decrement_standing_for_previous_result(previous_result)
+            _increment_standings_for_result(winner, loser)
+        previous_result.winning_team = winner
+        previous_result.losing_team = loser
+        previous_result.confirmed_from_submission = submission
+        previous_result.save(update_fields=["winning_team", "losing_team", "confirmed_from_submission"])
+    else:
+        _increment_standings_for_result(winner, loser)
+        ConfirmedMatchResult.objects.create(
+            match=match,
+            winning_team=winner,
+            losing_team=loser,
+            confirmed_from_submission=submission,
+        )
+
+    PointLedger.objects.update_or_create(
+        match=match,
+        team=winner,
+        reason="match_result",
+        defaults={"points_delta": WIN_POINTS},
+    )
+    PointLedger.objects.update_or_create(
+        match=match,
+        team=loser,
+        reason="match_result",
+        defaults={"points_delta": 0},
+    )
+    match.status = Match.STATUS_COMPLETED
+    match.save(update_fields=["status", "updated_at"])
+    recalculate_ladder_positions(match.team_a.division)
 
 
 def finalize_match_result(match):
@@ -830,38 +1053,8 @@ def finalize_match_result(match):
             raise InvalidInput("Match must have exactly one winner.")
         submission = list(get_submissions(locked_match).order_by("submitting_team_id"))[0]
 
-        winner_standing = _get_or_create_standing(winner)
-        loser_standing = _get_or_create_standing(loser)
-        winner_ledger, winner_created = PointLedger.objects.get_or_create(
-            match=locked_match,
-            team=winner,
-            reason="match_result",
-            defaults={"points_delta": WIN_POINTS},
-        )
-        loser_ledger, loser_created = PointLedger.objects.get_or_create(
-            match=locked_match,
-            team=loser,
-            reason="match_result",
-            defaults={"points_delta": 0},
-        )
-        if winner_created and loser_created:
-            winner_standing.matches_played += 1
-            winner_standing.wins += 1
-            winner_standing.points += WIN_POINTS
-            loser_standing.matches_played += 1
-            loser_standing.losses += 1
-            winner_standing.save(update_fields=["matches_played", "wins", "points", "updated_at"])
-            loser_standing.save(update_fields=["matches_played", "losses", "updated_at"])
-
-        result = ConfirmedMatchResult.objects.create(
-            match=locked_match,
-            winning_team=winner,
-            losing_team=loser,
-            confirmed_from_submission=submission,
-        )
-        locked_match.status = Match.STATUS_COMPLETED
-        locked_match.save(update_fields=["status", "updated_at"])
-        return result
+        _apply_official_result(locked_match, submission, winner, loser)
+        return locked_match.confirmed_result
 
 
 def update_ladder_stats_for_match(match):
