@@ -332,13 +332,19 @@ def cancel_match(admin_actor, match):
 
         reservations = list(
             locked_match.reservations.select_for_update()
-            .select_related("availability")
             .filter(status=MatchReservation.STATUS_ACTIVE)
+            .order_by("player_id", "id")
         )
+        availability_by_id = {
+            availability.id: availability
+            for availability in AvailabilitySlot.objects.select_for_update().filter(
+                id__in=[reservation.availability_id for reservation in reservations if reservation.availability_id]
+            )
+        }
         for reservation in reservations:
             reservation.status = MatchReservation.STATUS_RELEASED
             reservation.save(update_fields=["status"])
-            availability = reservation.availability
+            availability = availability_by_id.get(reservation.availability_id)
             if availability and availability.status == AvailabilitySlot.STATUS_CONSUMED:
                 has_other_active = availability.match_reservations.exclude(pk=reservation.pk).filter(
                     status=MatchReservation.STATUS_ACTIVE
