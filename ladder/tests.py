@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from .models import (
     AdminNotification,
@@ -1345,4 +1346,12 @@ class PhaseA5OperationsTests(TestCase):
         self.assertEqual(counts_after_first["matches"], Match.objects.count())
         self.assertGreaterEqual(Match.objects.count(), 2)
         self.assertTrue(MatchSuggestion.objects.exists())
+        for standing in LadderStanding.objects.select_related("team"):
+            self.assertEqual(standing.matches_played, standing.wins + standing.losses)
+            self.assertEqual(standing.points, standing.wins * 3)
+
+        demo_mens_team = Team.objects.get(name="Men Demo Team 1")
+        starts_at = timezone.now()
+        ends_at = starts_at + timedelta(days=30)
+        self.assertTrue(find_opponent_suggestions(demo_mens_team, (starts_at, ends_at)))
         self.assertIn("Demo data is ready", second_output.getvalue())

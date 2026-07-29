@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Design Engineering"
+  short_description: "Design and build exceptional accessible UI"
+  default_prompt: "Use $frontend-design-engineering to design and implement a polished, accessible BC_ladder frontend."
