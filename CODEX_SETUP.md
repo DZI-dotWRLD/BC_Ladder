@@ -50,9 +50,10 @@ Start with a short staged value before considering a long preload duration.
 When `DJANGO_DEBUG=false`, the app fails startup if production-critical security
 settings are missing or still use local-development values.
 
-PostgreSQL is required before production concurrency verification. Configure it
-with `DJANGO_DB_ENGINE`, `DJANGO_DB_NAME`, `DJANGO_DB_USER`,
-`DJANGO_DB_PASSWORD`, `DJANGO_DB_HOST`, and `DJANGO_DB_PORT`.
+PostgreSQL is required for production because booking overlap constraints and
+row-lock concurrency verification depend on it. Configure it with
+`DJANGO_DB_ENGINE=django.db.backends.postgresql`, `DJANGO_DB_NAME`,
+`DJANGO_DB_USER`, `DJANGO_DB_PASSWORD`, `DJANGO_DB_HOST`, and `DJANGO_DB_PORT`.
 
 Example local PostgreSQL run:
 

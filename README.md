@@ -113,7 +113,7 @@ DJANGO_SECRET_KEY
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS
 DJANGO_CSRF_TRUSTED_ORIGINS
-DJANGO_DB_ENGINE
+DJANGO_DB_ENGINE=django.db.backends.postgresql
 DJANGO_DB_NAME
 DJANGO_DB_USER
 DJANGO_DB_PASSWORD
@@ -126,7 +126,8 @@ DJANGO_CSRF_COOKIE_SECURE=true
 
 Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local
-allowed hosts, secure cookies, and HTTPS redirect are not configured.
+allowed hosts, PostgreSQL database settings, secure cookies, and HTTPS redirect
+are not configured.
 
 ## Current Limitations
 

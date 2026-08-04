@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -1564,6 +1564,8 @@ class DataIntegrityAuditCommandTests(TestCase):
         self.assertIn("Data integrity audit passed", output.getvalue())
 
     def test_audit_data_integrity_fails_for_overlapping_active_availability(self):
+        if connection.vendor == "postgresql":
+            self.skipTest("PostgreSQL exclusion constraints reject overlapping active availability before audit.")
         team = Team.objects.create(name="Audit Team", division=Team.DIVISION_MENS)
         player = self.create_player("audit-player", team)
         first_start = datetime(2026, 10, 5, 18, tzinfo=self.club_tz)
@@ -1624,12 +1626,73 @@ class DataIntegrityAuditCommandTests(TestCase):
         self.assertIn("standing.stats_mismatch", audit_output)
         self.assertIn("ledger.missing_match_result", audit_output)
 
+    def test_audit_data_integrity_fails_for_cross_linked_confirmed_result_and_extra_ledger(self):
+        team_a = Team.objects.create(name="Audit Cross A", division=Team.DIVISION_MENS)
+        team_b = Team.objects.create(name="Audit Cross B", division=Team.DIVISION_MENS)
+        team_c = Team.objects.create(name="Audit Cross C", division=Team.DIVISION_MENS)
+        team_d = Team.objects.create(name="Audit Cross D", division=Team.DIVISION_MENS)
+        match = self.create_match(team_a, team_b)
+        submission = MatchResultSubmission.objects.create(
+            match=match,
+            submitting_team=team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=0,
+        )
+        ConfirmedMatchResult.objects.create(
+            match=match,
+            winning_team=team_c,
+            losing_team=team_d,
+            confirmed_from_submission=submission,
+        )
+        LadderStanding.objects.create(team=team_a, position=1)
+        LadderStanding.objects.create(team=team_b, position=2)
+        LadderStanding.objects.create(team=team_c, position=3, matches_played=1, wins=1, points=3)
+        LadderStanding.objects.create(team=team_d, position=4, matches_played=1, losses=1)
+        PointLedger.objects.create(match=match, team=team_c, points_delta=3, reason="match_result")
+        PointLedger.objects.create(match=match, team=team_d, points_delta=0, reason="match_result")
+        PointLedger.objects.create(match=match, team=team_a, points_delta=0, reason="match_result")
+        output = StringIO()
+
+        with self.assertRaises(CommandError):
+            call_command("audit_data_integrity", stdout=output)
+
+        audit_output = output.getvalue()
+        self.assertIn("result.teams_mismatch", audit_output)
+        self.assertIn("result.winner_mismatch", audit_output)
+        self.assertIn("ledger.unexpected_match_result", audit_output)
+
+    def test_audit_data_integrity_fails_for_submission_from_different_match(self):
+        team_a = Team.objects.create(name="Audit Submission A", division=Team.DIVISION_MENS)
+        team_b = Team.objects.create(name="Audit Submission B", division=Team.DIVISION_MENS)
+        first_match = self.create_match(team_a, team_b)
+        second_match = self.create_match(team_a, team_b)
+        submission = MatchResultSubmission.objects.create(
+            match=second_match,
+            submitting_team=team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=0,
+        )
+        ConfirmedMatchResult.objects.create(
+            match=first_match,
+            winning_team=team_a,
+            losing_team=team_b,
+            confirmed_from_submission=submission,
+        )
+        PointLedger.objects.create(match=first_match, team=team_a, points_delta=3, reason="match_result")
+        PointLedger.objects.create(match=first_match, team=team_b, points_delta=0, reason="match_result")
+        output = StringIO()
+
+        with self.assertRaises(CommandError):
+            call_command("audit_data_integrity", stdout=output)
+
+        self.assertIn("result.submission_match_mismatch", output.getvalue())
+
 
 class ProductionSettingsValidationTests(TestCase):
     def valid_kwargs(self):
         return {
             "debug": False,
-            "secret_key": "x" * 50,
+            "secret_key": "valid-secret-A7mQ9vR2xT6pL4sN8wY3zB5cD1eF0gH",
             "secret_key_was_set": True,
             "allowed_hosts": ["bc-ladder.example.com"],
             "session_cookie_secure": True,
@@ -1640,6 +1703,14 @@ class ProductionSettingsValidationTests(TestCase):
             "hsts_seconds": 0,
             "hsts_include_subdomains": False,
             "hsts_preload": False,
+            "database": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": "bc_ladder",
+                "USER": "bc_ladder",
+                "PASSWORD": "secret",
+                "HOST": "db.example.com",
+                "PORT": "5432",
+            },
         }
 
     def test_debug_mode_allows_development_defaults(self):
@@ -1653,6 +1724,7 @@ class ProductionSettingsValidationTests(TestCase):
                 "session_cookie_secure": False,
                 "csrf_cookie_secure": False,
                 "secure_ssl_redirect": False,
+                "database": {"ENGINE": "django.db.backends.sqlite3", "NAME": "db.sqlite3"},
             }
         )
 
@@ -1673,6 +1745,43 @@ class ProductionSettingsValidationTests(TestCase):
         self.assertTrue(any("DJANGO_SECRET_KEY" in error for error in errors))
         self.assertTrue(any("must not contain '*'" in error for error in errors))
         self.assertTrue(any("local development hosts" in error for error in errors))
+
+    def test_production_rejects_low_diversity_or_django_insecure_secret(self):
+        kwargs = self.valid_kwargs()
+        kwargs["secret_key"] = "x" * 60
+
+        low_diversity_errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_SECRET_KEY" in error for error in low_diversity_errors))
+
+        kwargs["secret_key"] = "django-insecure-this-secret-is-long-enough-but-invalid-A7mQ9v"
+
+        django_insecure_errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_SECRET_KEY" in error for error in django_insecure_errors))
+
+    def test_production_rejects_sqlite_or_incomplete_database(self):
+        kwargs = self.valid_kwargs()
+        kwargs["database"] = {"ENGINE": "django.db.backends.sqlite3", "NAME": "db.sqlite3"}
+
+        sqlite_errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_DB_ENGINE" in error for error in sqlite_errors))
+        self.assertTrue(any("DJANGO_DB_USER" in error for error in sqlite_errors))
+
+        kwargs = self.valid_kwargs()
+        kwargs["database"] = {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": "bc_ladder",
+            "USER": "",
+            "PASSWORD": "secret",
+            "HOST": "db.example.com",
+            "PORT": "5432",
+        }
+
+        incomplete_errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_DB_USER" in error for error in incomplete_errors))
 
     def test_production_rejects_insecure_cookie_and_redirect_settings(self):
         kwargs = self.valid_kwargs()
