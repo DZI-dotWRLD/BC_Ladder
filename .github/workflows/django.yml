@@ -8,6 +8,41 @@ on:
       - "agent/**"
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run Ruff lint
+        run: python -m ruff check .
+
+      - name: Audit production dependencies
+        run: python -m pip_audit -r requirements.txt
+
+      - name: Run production deployment checks
+        env:
+          DJANGO_DEBUG: "false"
+          DJANGO_SECRET_KEY: "ci-deploy-check-secret-A7mQ9vR2xT6pL4sN8wY3zB5cD1eF0gH"
+          DJANGO_ALLOWED_HOSTS: "bc-ladder.example.com"
+          DJANGO_SECURE_SSL_REDIRECT: "true"
+          DJANGO_SESSION_COOKIE_SECURE: "true"
+          DJANGO_CSRF_COOKIE_SECURE: "true"
+          DJANGO_SECURE_HSTS_SECONDS: "300"
+        run: python manage.py check --deploy
+
   sqlite:
     runs-on: ubuntu-latest
 

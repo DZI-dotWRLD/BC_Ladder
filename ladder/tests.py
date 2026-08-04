@@ -5,10 +5,13 @@ from zoneinfo import ZoneInfo
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+
+from config.settings import DEVELOPMENT_SECRET_KEY, production_settings_errors
 
 from .models import (
     AdminNotification,
@@ -41,8 +44,6 @@ from .services import (
     get_pair_matching_slots,
     get_player_pairs,
     get_team_pair_availability,
-    get_submissions,
-    submissions_match,
     get_match_status,
     create_admin_notification_for_conflict,
     complete_match_if_result_confirmed,
@@ -1015,7 +1016,7 @@ class RemediationServiceTests(TestCase):
         third_slot = save_availability(team_a_players[2].user, starts_at, ends_at)
 
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 8, 1, tzinfo=self.club_tz))
+        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 9, 1, tzinfo=self.club_tz))
 
         partial = accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
         match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
@@ -1037,7 +1038,7 @@ class RemediationServiceTests(TestCase):
             save_availability(player.user, starts_at, ends_at)
 
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 8, 1, tzinfo=self.club_tz))
+        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 9, 1, tzinfo=self.club_tz))
 
         with self.assertRaises(AuthorizationFailure):
             accept_suggestion(team_a_players[2].user, suggestion, suggestion.version)
@@ -1534,3 +1535,177 @@ class PhaseA5OperationsTests(TestCase):
         ends_at = starts_at + timedelta(days=30)
         self.assertTrue(find_opponent_suggestions(demo_mens_team, (starts_at, ends_at)))
         self.assertIn("Demo data is ready", second_output.getvalue())
+
+
+class DataIntegrityAuditCommandTests(TestCase):
+    club_tz = ZoneInfo("America/New_York")
+
+    def create_player(self, username, team):
+        user = get_user_model().objects.create_user(username=username)
+        return PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE, team=team)
+
+    def create_match(self, team_a, team_b):
+        return Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 10, 5),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=datetime(2026, 10, 5, 18, tzinfo=self.club_tz),
+            scheduled_ends_at=datetime(2026, 10, 5, 20, tzinfo=self.club_tz),
+        )
+
+    def test_audit_data_integrity_passes_for_empty_database(self):
+        output = StringIO()
+
+        call_command("audit_data_integrity", stdout=output)
+
+        self.assertIn("Data integrity audit passed", output.getvalue())
+
+    def test_audit_data_integrity_fails_for_overlapping_active_availability(self):
+        team = Team.objects.create(name="Audit Team", division=Team.DIVISION_MENS)
+        player = self.create_player("audit-player", team)
+        first_start = datetime(2026, 10, 5, 18, tzinfo=self.club_tz)
+        first_end = datetime(2026, 10, 5, 20, tzinfo=self.club_tz)
+        second_start = datetime(2026, 10, 5, 19, tzinfo=self.club_tz)
+        second_end = datetime(2026, 10, 5, 21, tzinfo=self.club_tz)
+        AvailabilitySlot.objects.create(
+            player=player,
+            week_start_date=date(2026, 10, 5),
+            day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            start_time=time(18, 0),
+            end_time=time(20, 0),
+            starts_at=first_start,
+            ends_at=first_end,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+        )
+        AvailabilitySlot.objects.create(
+            player=player,
+            week_start_date=date(2026, 10, 5),
+            day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            start_time=time(19, 0),
+            end_time=time(21, 0),
+            starts_at=second_start,
+            ends_at=second_end,
+            status=AvailabilitySlot.STATUS_ACTIVE,
+        )
+        output = StringIO()
+
+        with self.assertRaises(CommandError):
+            call_command("audit_data_integrity", stdout=output)
+
+        self.assertIn("availability.overlap_active", output.getvalue())
+
+    def test_audit_data_integrity_fails_for_standing_mismatch_and_missing_ledger(self):
+        team_a = Team.objects.create(name="Audit A", division=Team.DIVISION_MENS)
+        team_b = Team.objects.create(name="Audit B", division=Team.DIVISION_MENS)
+        match = self.create_match(team_a, team_b)
+        submission = MatchResultSubmission.objects.create(
+            match=match,
+            submitting_team=team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=0,
+        )
+        ConfirmedMatchResult.objects.create(
+            match=match,
+            winning_team=team_a,
+            losing_team=team_b,
+            confirmed_from_submission=submission,
+        )
+        LadderStanding.objects.create(team=team_a, position=1, matches_played=0, wins=0, losses=0, points=0)
+        LadderStanding.objects.create(team=team_b, position=2, matches_played=0, wins=0, losses=0, points=0)
+        output = StringIO()
+
+        with self.assertRaises(CommandError):
+            call_command("audit_data_integrity", stdout=output)
+
+        audit_output = output.getvalue()
+        self.assertIn("standing.stats_mismatch", audit_output)
+        self.assertIn("ledger.missing_match_result", audit_output)
+
+
+class ProductionSettingsValidationTests(TestCase):
+    def valid_kwargs(self):
+        return {
+            "debug": False,
+            "secret_key": "x" * 50,
+            "secret_key_was_set": True,
+            "allowed_hosts": ["bc-ladder.example.com"],
+            "session_cookie_secure": True,
+            "csrf_cookie_secure": True,
+            "secure_ssl_redirect": True,
+            "proxy_ssl_header_name": "HTTP_X_FORWARDED_PROTO",
+            "proxy_ssl_header_value": "https",
+            "hsts_seconds": 0,
+            "hsts_include_subdomains": False,
+            "hsts_preload": False,
+        }
+
+    def test_debug_mode_allows_development_defaults(self):
+        kwargs = self.valid_kwargs()
+        kwargs.update(
+            {
+                "debug": True,
+                "secret_key": DEVELOPMENT_SECRET_KEY,
+                "secret_key_was_set": False,
+                "allowed_hosts": ["localhost", "127.0.0.1"],
+                "session_cookie_secure": False,
+                "csrf_cookie_secure": False,
+                "secure_ssl_redirect": False,
+            }
+        )
+
+        self.assertEqual(production_settings_errors(**kwargs), [])
+
+    def test_production_rejects_development_secret_and_hosts(self):
+        kwargs = self.valid_kwargs()
+        kwargs.update(
+            {
+                "secret_key": DEVELOPMENT_SECRET_KEY,
+                "secret_key_was_set": False,
+                "allowed_hosts": ["localhost", "*"],
+            }
+        )
+
+        errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_SECRET_KEY" in error for error in errors))
+        self.assertTrue(any("must not contain '*'" in error for error in errors))
+        self.assertTrue(any("local development hosts" in error for error in errors))
+
+    def test_production_rejects_insecure_cookie_and_redirect_settings(self):
+        kwargs = self.valid_kwargs()
+        kwargs.update(
+            {
+                "session_cookie_secure": False,
+                "csrf_cookie_secure": False,
+                "secure_ssl_redirect": False,
+            }
+        )
+
+        errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_SESSION_COOKIE_SECURE" in error for error in errors))
+        self.assertTrue(any("DJANGO_CSRF_COOKIE_SECURE" in error for error in errors))
+        self.assertTrue(any("DJANGO_SECURE_SSL_REDIRECT" in error for error in errors))
+
+    def test_production_rejects_partial_proxy_and_invalid_hsts_preload(self):
+        kwargs = self.valid_kwargs()
+        kwargs.update(
+            {
+                "proxy_ssl_header_name": "HTTP_X_FORWARDED_PROTO",
+                "proxy_ssl_header_value": "",
+                "hsts_preload": True,
+                "hsts_include_subdomains": False,
+                "hsts_seconds": 300,
+            }
+        )
+
+        errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("Set both DJANGO_SECURE_PROXY_SSL_HEADER_NAME" in error for error in errors))
+        self.assertTrue(
+            any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" in error for error in errors)
+        )
+        self.assertTrue(any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_SECONDS" in error for error in errors))

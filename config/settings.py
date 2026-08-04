@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,13 +30,16 @@ def env_list(name, default=""):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+DEVELOPMENT_SECRET_KEY = "bc-ladder-development-only-secret-key"
+
 # Development fallback only. Set DJANGO_SECRET_KEY in every deployed environment.
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bc-ladder-development-only-secret-key")
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEVELOPMENT_SECRET_KEY)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DJANGO_DEBUG", True)
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 
 
 # Application definition
@@ -154,3 +158,71 @@ SECURE_PROXY_SSL_HEADER = (
 SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
 SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
+SECURE_REFERRER_POLICY = os.environ.get("DJANGO_SECURE_REFERRER_POLICY", "same-origin")
+
+
+def validate_production_settings():
+    errors = production_settings_errors(
+        debug=DEBUG,
+        secret_key=SECRET_KEY,
+        secret_key_was_set=bool(os.environ.get("DJANGO_SECRET_KEY")),
+        allowed_hosts=ALLOWED_HOSTS,
+        session_cookie_secure=SESSION_COOKIE_SECURE,
+        csrf_cookie_secure=CSRF_COOKIE_SECURE,
+        secure_ssl_redirect=SECURE_SSL_REDIRECT,
+        proxy_ssl_header_name=SECURE_PROXY_SSL_HEADER_NAME,
+        proxy_ssl_header_value=SECURE_PROXY_SSL_HEADER_VALUE,
+        hsts_seconds=SECURE_HSTS_SECONDS,
+        hsts_include_subdomains=SECURE_HSTS_INCLUDE_SUBDOMAINS,
+        hsts_preload=SECURE_HSTS_PRELOAD,
+    )
+
+    if errors:
+        raise ImproperlyConfigured("Unsafe production settings: " + " ".join(errors))
+
+
+def production_settings_errors(
+    *,
+    debug,
+    secret_key,
+    secret_key_was_set,
+    allowed_hosts,
+    session_cookie_secure,
+    csrf_cookie_secure,
+    secure_ssl_redirect,
+    proxy_ssl_header_name,
+    proxy_ssl_header_value,
+    hsts_seconds,
+    hsts_include_subdomains,
+    hsts_preload,
+):
+    if debug:
+        return []
+
+    errors = []
+    if not secret_key_was_set or secret_key == DEVELOPMENT_SECRET_KEY or len(secret_key) < 32:
+        errors.append("DJANGO_SECRET_KEY must be set to a rotated secret of at least 32 characters.")
+    if not allowed_hosts:
+        errors.append("DJANGO_ALLOWED_HOSTS must list the deployed hostnames.")
+    if "*" in allowed_hosts:
+        errors.append("DJANGO_ALLOWED_HOSTS must not contain '*' in production.")
+    if any(host in {"localhost", "127.0.0.1", "[::1]"} for host in allowed_hosts):
+        errors.append("DJANGO_ALLOWED_HOSTS must not contain local development hosts in production.")
+    if not session_cookie_secure:
+        errors.append("DJANGO_SESSION_COOKIE_SECURE must be true in production.")
+    if not csrf_cookie_secure:
+        errors.append("DJANGO_CSRF_COOKIE_SECURE must be true in production.")
+    if not secure_ssl_redirect:
+        errors.append("DJANGO_SECURE_SSL_REDIRECT must be true in production.")
+    if bool(proxy_ssl_header_name) != bool(proxy_ssl_header_value):
+        errors.append(
+            "Set both DJANGO_SECURE_PROXY_SSL_HEADER_NAME and "
+            "DJANGO_SECURE_PROXY_SSL_HEADER_VALUE, or set neither."
+        )
+    if hsts_preload and not hsts_include_subdomains:
+        errors.append("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=true.")
+    if hsts_preload and hsts_seconds < 31536000:
+        errors.append("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_SECONDS >= 31536000.")
+    return errors
+
+validate_production_settings()

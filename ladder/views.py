@@ -6,7 +6,6 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 from django.utils import timezone
 
 from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamJoinForm
@@ -20,11 +19,7 @@ from .models import (
     TeamMembership,
 )
 from .services import (
-    AuthorizationFailure,
-    BookingCollision,
     DomainError,
-    InvalidInput,
-    StaleState,
     accept_suggestion,
     cancel_availability,
     create_match_suggestion,

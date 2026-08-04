@@ -1,12 +1,10 @@
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
+from datetime import timedelta, timezone as datetime_timezone
 from itertools import combinations
 from zoneinfo import ZoneInfo
 
-from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import Max, Q
+from django.db.models import Max
 from django.utils import timezone
 
 from .models import (

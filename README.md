@@ -65,11 +65,21 @@ instead of creating duplicates.
 .\venv\Scripts\python.exe manage.py check
 .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
 .\venv\Scripts\python.exe manage.py reconcile_standings
+.\venv\Scripts\python.exe manage.py audit_data_integrity
 git diff --check
 ```
 
-GitHub Actions runs tests, Django checks, and migration consistency checks on
-pushes and pull requests against both SQLite and PostgreSQL.
+Optional local quality tooling:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\venv\Scripts\python.exe -m ruff check .
+.\venv\Scripts\python.exe -m pip_audit -r requirements.txt
+```
+
+GitHub Actions runs tests, Django checks, migration consistency checks, Ruff,
+dependency audit, and deployment checks on pushes and pull requests. Tests run
+against both SQLite and PostgreSQL.
 
 ## PostgreSQL Local Verification
 
@@ -102,6 +112,7 @@ Development defaults are local only. Deployed environments should set:
 DJANGO_SECRET_KEY
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS
+DJANGO_CSRF_TRUSTED_ORIGINS
 DJANGO_DB_ENGINE
 DJANGO_DB_NAME
 DJANGO_DB_USER
@@ -114,6 +125,8 @@ DJANGO_CSRF_COOKIE_SECURE=true
 ```
 
 Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
+When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local
+allowed hosts, secure cookies, and HTTPS redirect are not configured.
 
 ## Current Limitations
 
