@@ -74,3 +74,6 @@ concurrency tests skip automatically under SQLite. PostgreSQL migrations install
 `btree_gist` and add exclusion constraints for overlapping active availability
 and active match reservations per player; SQLite keeps the application/service
 checks only.
+
+See `DEPLOYMENT.md` for the production deploy, smoke-test, static-file,
+backup, and restore runbook.

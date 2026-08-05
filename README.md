@@ -81,6 +81,8 @@ GitHub Actions runs tests, Django checks, migration consistency checks, Ruff,
 dependency audit, and deployment checks on pushes and pull requests. Tests run
 against both SQLite and PostgreSQL.
 
+Deployment steps live in [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## PostgreSQL Local Verification
 
 SQLite remains the default for local development. To run against PostgreSQL,
@@ -154,5 +156,5 @@ are not configured.
 - Deployment secret management and production host configuration.
 - Static-file hosting.
 - HTTPS, secure cookies, trusted proxy settings, and staged HSTS.
-- Backups, restore testing, runbooks, monitoring, and structured logging.
+- Backups, restore testing, monitoring, and structured logging.
 - Dependency/security scanning.

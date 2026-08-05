@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta
 from io import StringIO
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
@@ -1818,3 +1819,18 @@ class ProductionSettingsValidationTests(TestCase):
             any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" in error for error in errors)
         )
         self.assertTrue(any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_SECONDS" in error for error in errors))
+
+
+class HealthCheckTests(TestCase):
+    def test_health_check_is_public_and_not_cached(self):
+        response = self.client.get("/health/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_staticfiles_storage_is_manifest_whitenoise_storage(self):
+        self.assertEqual(
+            settings.STORAGES["staticfiles"]["BACKEND"],
+            "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        )

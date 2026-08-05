@@ -49,6 +49,9 @@ jobs:
           DJANGO_DB_PORT: "5432"
         run: python manage.py check --deploy
 
+      - name: Verify static collection
+        run: python manage.py collectstatic --noinput --clear
+
   sqlite:
     runs-on: ubuntu-latest
 
