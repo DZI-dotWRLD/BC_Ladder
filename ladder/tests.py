@@ -1712,6 +1712,7 @@ class ProductionSettingsValidationTests(TestCase):
                 "HOST": "db.example.com",
                 "PORT": "5432",
             },
+            "whitenoise_manifest_strict": True,
         }
 
     def test_debug_mode_allows_development_defaults(self):
@@ -1726,6 +1727,7 @@ class ProductionSettingsValidationTests(TestCase):
                 "csrf_cookie_secure": False,
                 "secure_ssl_redirect": False,
                 "database": {"ENGINE": "django.db.backends.sqlite3", "NAME": "db.sqlite3"},
+                "whitenoise_manifest_strict": False,
             }
         )
 
@@ -1784,6 +1786,14 @@ class ProductionSettingsValidationTests(TestCase):
 
         self.assertTrue(any("DJANGO_DB_USER" in error for error in incomplete_errors))
 
+    def test_production_rejects_non_strict_static_manifest(self):
+        kwargs = self.valid_kwargs()
+        kwargs["whitenoise_manifest_strict"] = False
+
+        errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("DJANGO_WHITENOISE_MANIFEST_STRICT" in error for error in errors))
+
     def test_production_rejects_insecure_cookie_and_redirect_settings(self):
         kwargs = self.valid_kwargs()
         kwargs.update(
@@ -1834,3 +1844,6 @@ class HealthCheckTests(TestCase):
             settings.STORAGES["staticfiles"]["BACKEND"],
             "whitenoise.storage.CompressedManifestStaticFilesStorage",
         )
+
+    def test_static_manifest_is_non_strict_in_debug_tests(self):
+        self.assertFalse(settings.WHITENOISE_MANIFEST_STRICT)

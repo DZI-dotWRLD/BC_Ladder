@@ -50,6 +50,20 @@ jobs:
         run: python manage.py check --deploy
 
       - name: Verify static collection
+        env:
+          DJANGO_DEBUG: "false"
+          DJANGO_SECRET_KEY: "ci-deploy-check-secret-A7mQ9vR2xT6pL4sN8wY3zB5cD1eF0gH"
+          DJANGO_ALLOWED_HOSTS: "bc-ladder.example.com"
+          DJANGO_SECURE_SSL_REDIRECT: "true"
+          DJANGO_SESSION_COOKIE_SECURE: "true"
+          DJANGO_CSRF_COOKIE_SECURE: "true"
+          DJANGO_SECURE_HSTS_SECONDS: "300"
+          DJANGO_DB_ENGINE: django.db.backends.postgresql
+          DJANGO_DB_NAME: bc_ladder_deploy_check
+          DJANGO_DB_USER: bc_ladder
+          DJANGO_DB_PASSWORD: bc_ladder
+          DJANGO_DB_HOST: localhost
+          DJANGO_DB_PORT: "5432"
         run: python manage.py collectstatic --noinput --clear
 
   sqlite:

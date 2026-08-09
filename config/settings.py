@@ -151,6 +151,7 @@ STORAGES = {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
+WHITENOISE_MANIFEST_STRICT = env_bool("DJANGO_WHITENOISE_MANIFEST_STRICT", not DEBUG)
 
 LOGIN_URL = "ladder:login"
 LOGIN_REDIRECT_URL = "ladder:dashboard"
@@ -219,6 +220,7 @@ def validate_production_settings():
         hsts_include_subdomains=SECURE_HSTS_INCLUDE_SUBDOMAINS,
         hsts_preload=SECURE_HSTS_PRELOAD,
         database=DATABASES["default"],
+        whitenoise_manifest_strict=WHITENOISE_MANIFEST_STRICT,
     )
 
     if errors:
@@ -240,6 +242,7 @@ def production_settings_errors(
     hsts_include_subdomains,
     hsts_preload,
     database,
+    whitenoise_manifest_strict,
 ):
     if debug:
         return []
@@ -288,6 +291,8 @@ def production_settings_errors(
     ):
         if not database.get(key):
             errors.append(f"{env_name} must be set in production.")
+    if not whitenoise_manifest_strict:
+        errors.append("DJANGO_WHITENOISE_MANIFEST_STRICT must not be false in production.")
     return errors
 
 validate_production_settings()
