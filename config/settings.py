@@ -216,6 +216,7 @@ def validate_production_settings():
         secret_key=SECRET_KEY,
         secret_key_was_set=bool(os.environ.get("DJANGO_SECRET_KEY")),
         allowed_hosts=ALLOWED_HOSTS,
+        csrf_trusted_origins=CSRF_TRUSTED_ORIGINS,
         session_cookie_secure=SESSION_COOKIE_SECURE,
         csrf_cookie_secure=CSRF_COOKIE_SECURE,
         secure_ssl_redirect=SECURE_SSL_REDIRECT,
@@ -238,6 +239,7 @@ def production_settings_errors(
     secret_key,
     secret_key_was_set,
     allowed_hosts,
+    csrf_trusted_origins,
     session_cookie_secure,
     csrf_cookie_secure,
     secure_ssl_redirect,
@@ -270,6 +272,13 @@ def production_settings_errors(
         errors.append("DJANGO_ALLOWED_HOSTS must not contain '*' in production.")
     if any(host in {"localhost", "127.0.0.1", "[::1]"} for host in allowed_hosts):
         errors.append("DJANGO_ALLOWED_HOSTS must not contain local development hosts in production.")
+    for origin in csrf_trusted_origins:
+        if not origin.startswith("https://"):
+            errors.append("DJANGO_CSRF_TRUSTED_ORIGINS entries must use https:// in production.")
+        if "*" in origin:
+            errors.append("DJANGO_CSRF_TRUSTED_ORIGINS must not contain wildcards in production.")
+        if any(local_host in origin for local_host in ("localhost", "127.0.0.1", "[::1]")):
+            errors.append("DJANGO_CSRF_TRUSTED_ORIGINS must not contain local development origins in production.")
     if not session_cookie_secure:
         errors.append("DJANGO_SESSION_COOKIE_SECURE must be true in production.")
     if not csrf_cookie_secure:

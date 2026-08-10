@@ -1696,6 +1696,7 @@ class ProductionSettingsValidationTests(TestCase):
             "secret_key": "valid-secret-A7mQ9vR2xT6pL4sN8wY3zB5cD1eF0gH",
             "secret_key_was_set": True,
             "allowed_hosts": ["bc-ladder.example.com"],
+            "csrf_trusted_origins": ["https://bc-ladder.example.com"],
             "session_cookie_secure": True,
             "csrf_cookie_secure": True,
             "secure_ssl_redirect": True,
@@ -1723,6 +1724,7 @@ class ProductionSettingsValidationTests(TestCase):
                 "secret_key": DEVELOPMENT_SECRET_KEY,
                 "secret_key_was_set": False,
                 "allowed_hosts": ["localhost", "127.0.0.1"],
+                "csrf_trusted_origins": ["http://localhost:8000"],
                 "session_cookie_secure": False,
                 "csrf_cookie_secure": False,
                 "secure_ssl_redirect": False,
@@ -1748,6 +1750,20 @@ class ProductionSettingsValidationTests(TestCase):
         self.assertTrue(any("DJANGO_SECRET_KEY" in error for error in errors))
         self.assertTrue(any("must not contain '*'" in error for error in errors))
         self.assertTrue(any("local development hosts" in error for error in errors))
+
+    def test_production_rejects_insecure_or_local_csrf_trusted_origins(self):
+        kwargs = self.valid_kwargs()
+        kwargs["csrf_trusted_origins"] = [
+            "http://bc-ladder.example.com",
+            "https://*.example.com",
+            "https://localhost:8000",
+        ]
+
+        errors = production_settings_errors(**kwargs)
+
+        self.assertTrue(any("entries must use https://" in error for error in errors))
+        self.assertTrue(any("must not contain wildcards" in error for error in errors))
+        self.assertTrue(any("local development origins" in error for error in errors))
 
     def test_production_rejects_low_diversity_or_django_insecure_secret(self):
         kwargs = self.valid_kwargs()

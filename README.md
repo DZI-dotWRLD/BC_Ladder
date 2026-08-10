@@ -130,6 +130,8 @@ Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local
 allowed hosts, PostgreSQL database settings, secure cookies, and HTTPS redirect
 are not configured.
+If `DJANGO_CSRF_TRUSTED_ORIGINS` is set in production, use explicit `https://`
+origins only; local development origins and wildcards are rejected.
 
 ## Current Limitations
 

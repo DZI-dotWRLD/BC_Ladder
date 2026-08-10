@@ -24,6 +24,10 @@ DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_LOG_LEVEL=INFO
 ```
 
+`DJANGO_CSRF_TRUSTED_ORIGINS` may be omitted for a same-origin deployment. If
+set, every entry must be an explicit HTTPS origin. Do not use local development
+origins or wildcards in production.
+
 If the app is behind a trusted proxy or load balancer that terminates TLS, also
 set both proxy variables:
 
@@ -109,4 +113,3 @@ After restore, point a staging app at the restored database and run:
   production migrations after real users have written data.
 - If `audit_data_integrity` fails, stop deployment and inspect the reported IDs
   before starting the new application version.
-
