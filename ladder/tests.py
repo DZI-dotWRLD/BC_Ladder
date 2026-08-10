@@ -1839,10 +1839,10 @@ class HealthCheckTests(TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
         self.assertEqual(response["Cache-Control"], "no-store")
 
-    def test_staticfiles_storage_is_manifest_whitenoise_storage(self):
+    def test_staticfiles_storage_is_non_manifest_in_debug_tests(self):
         self.assertEqual(
             settings.STORAGES["staticfiles"]["BACKEND"],
-            "whitenoise.storage.CompressedManifestStaticFilesStorage",
+            "django.contrib.staticfiles.storage.StaticFilesStorage",
         )
 
     def test_static_manifest_is_non_strict_in_debug_tests(self):

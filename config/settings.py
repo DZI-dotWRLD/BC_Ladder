@@ -143,15 +143,20 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / "staticfiles"
+WHITENOISE_MANIFEST_STRICT = env_bool("DJANGO_WHITENOISE_MANIFEST_STRICT", not DEBUG)
+STATICFILES_STORAGE_BACKEND = (
+    "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    if WHITENOISE_MANIFEST_STRICT
+    else "django.contrib.staticfiles.storage.StaticFilesStorage"
+)
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": STATICFILES_STORAGE_BACKEND,
     },
 }
-WHITENOISE_MANIFEST_STRICT = env_bool("DJANGO_WHITENOISE_MANIFEST_STRICT", not DEBUG)
 
 LOGIN_URL = "ladder:login"
 LOGIN_REDIRECT_URL = "ladder:dashboard"
