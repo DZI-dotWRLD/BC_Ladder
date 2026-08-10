@@ -1440,7 +1440,7 @@ class PhaseA5OperationsTests(TestCase):
         for player in team_a_players + team_b_players:
             save_availability(player.user, starts_at, ends_at)
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2026, 8, 10, 18))
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 8, 10, 18))
         accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
         match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
 
