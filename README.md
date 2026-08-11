@@ -74,6 +74,7 @@ Optional local quality tooling:
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\venv\Scripts\python.exe -m ruff check .
+.\venv\Scripts\python.exe -m ruff format --check .
 .\venv\Scripts\python.exe -m pip_audit -r requirements.txt
 ```
 
@@ -115,16 +116,17 @@ DJANGO_SECRET_KEY
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS
 DJANGO_CSRF_TRUSTED_ORIGINS
-DJANGO_DB_ENGINE=django.db.backends.postgresql
-DJANGO_DB_NAME
-DJANGO_DB_USER
-DJANGO_DB_PASSWORD
-DJANGO_DB_HOST
-DJANGO_DB_PORT
+DATABASE_URL
 DJANGO_SECURE_SSL_REDIRECT=true
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 ```
+
+Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
+the managed PostgreSQL service and `RENDER_EXTERNAL_HOSTNAME` for the default
+`.onrender.com` host. For manual non-Render deployments, the older
+`DJANGO_DB_ENGINE`, `DJANGO_DB_NAME`, `DJANGO_DB_USER`, `DJANGO_DB_PASSWORD`,
+`DJANGO_DB_HOST`, and `DJANGO_DB_PORT` variables are still supported.
 
 Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local
@@ -151,7 +153,7 @@ origins only; local development origins and wildcards are rejected.
 
 ## Phase B Checklist
 
-- PostgreSQL deployment target and managed database selection.
+- Render web service and Render PostgreSQL deployment trial.
 - Broader PostgreSQL-specific transaction/concurrency coverage.
 - Data audit before production migration to confirm no existing overlapping
   active availability or active reservation rows.

@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -28,8 +29,41 @@ def env_bool(name, default=False):
 
 
 def env_list(name, default=""):
-    value = os.environ.get(name, default)
+    return csv_list(os.environ.get(name, default))
+
+
+def csv_list(value):
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def build_allowed_hosts(explicit_hosts=None, render_external_hostname=""):
+    default_hosts = render_external_hostname or "localhost,127.0.0.1"
+    hosts = csv_list(explicit_hosts if explicit_hosts is not None else default_hosts)
+    if render_external_hostname and explicit_hosts and "*" not in hosts and render_external_hostname not in hosts:
+        hosts.append(render_external_hostname)
+    return hosts
+
+
+def build_database_config(database_url=None, manual_env=None):
+    env = os.environ if manual_env is None else manual_env
+    if database_url:
+        return {
+            "default": dj_database_url.parse(
+                database_url,
+                conn_max_age=600,
+                conn_health_checks=True,
+            )
+        }
+    return {
+        "default": {
+            "ENGINE": env.get("DJANGO_DB_ENGINE", "django.db.backends.sqlite3"),
+            "NAME": env.get("DJANGO_DB_NAME", BASE_DIR / "db.sqlite3"),
+            "USER": env.get("DJANGO_DB_USER", ""),
+            "PASSWORD": env.get("DJANGO_DB_PASSWORD", ""),
+            "HOST": env.get("DJANGO_DB_HOST", ""),
+            "PORT": env.get("DJANGO_DB_PORT", ""),
+        }
+    }
 
 
 DEVELOPMENT_SECRET_KEY = "bc-ladder-development-only-secret-key"
@@ -40,7 +74,10 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEVELOPMENT_SECRET_KEY)
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DJANGO_DEBUG", True)
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = build_allowed_hosts(
+    explicit_hosts=os.environ.get("DJANGO_ALLOWED_HOSTS"),
+    render_external_hostname=os.environ.get("RENDER_EXTERNAL_HOSTNAME", ""),
+)
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 
 
@@ -90,22 +127,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-if os.environ.get("DATABASE_URL"):
-    raise RuntimeError(
-        "DATABASE_URL parsing is not configured. Set DJANGO_DB_ENGINE, DJANGO_DB_NAME, "
-        "DJANGO_DB_USER, DJANGO_DB_PASSWORD, DJANGO_DB_HOST, and DJANGO_DB_PORT instead."
-    )
-
-DATABASES = {
-    "default": {
-        "ENGINE": os.environ.get("DJANGO_DB_ENGINE", "django.db.backends.sqlite3"),
-        "NAME": os.environ.get("DJANGO_DB_NAME", BASE_DIR / "db.sqlite3"),
-        "USER": os.environ.get("DJANGO_DB_USER", ""),
-        "PASSWORD": os.environ.get("DJANGO_DB_PASSWORD", ""),
-        "HOST": os.environ.get("DJANGO_DB_HOST", ""),
-        "PORT": os.environ.get("DJANGO_DB_PORT", ""),
-    }
-}
+DATABASES = build_database_config(os.environ.get("DATABASE_URL"))
 
 
 # Password validation

@@ -21,6 +21,7 @@ Optional development quality tools:
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\venv\Scripts\python.exe -m ruff check .
+.\venv\Scripts\python.exe -m ruff format --check .
 .\venv\Scripts\python.exe -m pip_audit -r requirements.txt
 ```
 
@@ -32,6 +33,8 @@ Development defaults are intentionally local only:
 - `DJANGO_ALLOWED_HOSTS` defaults to `localhost,127.0.0.1`.
 - `DJANGO_SECRET_KEY` defaults to a development-only placeholder.
 - SQLite is used unless `DJANGO_DB_ENGINE` and related database variables are set.
+- Render-style `DATABASE_URL` is supported and takes precedence over individual
+  `DJANGO_DB_*` variables.
 
 For deployed environments, set at least:
 
@@ -51,11 +54,21 @@ When `DJANGO_DEBUG=false`, the app fails startup if production-critical security
 settings are missing or still use local-development values.
 
 PostgreSQL is required for production because booking overlap constraints and
-row-lock concurrency verification depend on it. Configure it with
+row-lock concurrency verification depend on it. Render deployments should use
+`DATABASE_URL` from the managed PostgreSQL service. Manual deployments may use
 `DJANGO_DB_ENGINE=django.db.backends.postgresql`, `DJANGO_DB_NAME`,
 `DJANGO_DB_USER`, `DJANGO_DB_PASSWORD`, `DJANGO_DB_HOST`, and `DJANGO_DB_PORT`.
 
 Example local PostgreSQL run:
+
+```powershell
+$env:DATABASE_URL = "postgresql://bc_ladder:<password>@localhost:5432/bc_ladder"
+.\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\python.exe manage.py audit_data_integrity
+.\venv\Scripts\python.exe manage.py test
+```
+
+Equivalent individual-variable local PostgreSQL run:
 
 ```powershell
 $env:DJANGO_DB_ENGINE = "django.db.backends.postgresql"

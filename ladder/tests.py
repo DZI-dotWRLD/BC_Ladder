@@ -12,7 +12,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from config.settings import DEVELOPMENT_SECRET_KEY, production_settings_errors
+from config.settings import DEVELOPMENT_SECRET_KEY, build_allowed_hosts, build_database_config, production_settings_errors
 
 from .models import (
     AdminNotification,
@@ -1695,6 +1695,39 @@ class ProductionSettingsValidationTests(TestCase):
             },
             "whitenoise_manifest_strict": True,
         }
+
+    def test_render_external_hostname_is_safe_default_allowed_host(self):
+        self.assertEqual(
+            build_allowed_hosts(render_external_hostname="bc-ladder.onrender.com"),
+            ["bc-ladder.onrender.com"],
+        )
+
+    def test_explicit_allowed_hosts_can_include_render_hostname(self):
+        self.assertEqual(
+            build_allowed_hosts(
+                explicit_hosts="custom.example.com",
+                render_external_hostname="bc-ladder.onrender.com",
+            ),
+            ["custom.example.com", "bc-ladder.onrender.com"],
+        )
+
+    def test_database_url_builds_postgresql_config_with_connection_reuse(self):
+        database = build_database_config("postgresql://bc_ladder:secret@db.internal:5432/bc_ladder")["default"]
+
+        self.assertEqual(database["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(database["NAME"], "bc_ladder")
+        self.assertEqual(database["USER"], "bc_ladder")
+        self.assertEqual(database["PASSWORD"], "secret")
+        self.assertEqual(database["HOST"], "db.internal")
+        self.assertEqual(database["PORT"], 5432)
+        self.assertEqual(database["CONN_MAX_AGE"], 600)
+        self.assertTrue(database["CONN_HEALTH_CHECKS"])
+
+    def test_manual_database_env_path_remains_development_fallback(self):
+        database = build_database_config(manual_env={})["default"]
+
+        self.assertEqual(database["ENGINE"], "django.db.backends.sqlite3")
+        self.assertEqual(database["NAME"], settings.BASE_DIR / "db.sqlite3")
 
     def test_debug_mode_allows_development_defaults(self):
         kwargs = self.valid_kwargs()

@@ -44,12 +44,7 @@ jobs:
           DJANGO_SESSION_COOKIE_SECURE: "true"
           DJANGO_CSRF_COOKIE_SECURE: "true"
           DJANGO_SECURE_HSTS_SECONDS: "300"
-          DJANGO_DB_ENGINE: django.db.backends.postgresql
-          DJANGO_DB_NAME: bc_ladder_deploy_check
-          DJANGO_DB_USER: bc_ladder
-          DJANGO_DB_PASSWORD: bc_ladder
-          DJANGO_DB_HOST: localhost
-          DJANGO_DB_PORT: "5432"
+          DATABASE_URL: postgresql://bc_ladder:bc_ladder@localhost:5432/bc_ladder_deploy_check
         run: python manage.py check --deploy
 
       - name: Verify static collection
@@ -61,12 +56,7 @@ jobs:
           DJANGO_SESSION_COOKIE_SECURE: "true"
           DJANGO_CSRF_COOKIE_SECURE: "true"
           DJANGO_SECURE_HSTS_SECONDS: "300"
-          DJANGO_DB_ENGINE: django.db.backends.postgresql
-          DJANGO_DB_NAME: bc_ladder_deploy_check
-          DJANGO_DB_USER: bc_ladder
-          DJANGO_DB_PASSWORD: bc_ladder
-          DJANGO_DB_HOST: localhost
-          DJANGO_DB_PORT: "5432"
+          DATABASE_URL: postgresql://bc_ladder:bc_ladder@localhost:5432/bc_ladder_deploy_check
         run: python manage.py collectstatic --noinput --clear
 
   sqlite:
