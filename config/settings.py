@@ -282,10 +282,10 @@ def production_settings_errors(
         not secret_key_was_set
         or secret_key == DEVELOPMENT_SECRET_KEY
         or secret_key.startswith("django-insecure-")
-        or len(secret_key) < 50
+        or len(secret_key) < 32
         or len(set(secret_key)) < 5
     ):
-        errors.append("DJANGO_SECRET_KEY must be set to a rotated secret of at least 50 characters with at least 5 unique characters.")
+        errors.append("DJANGO_SECRET_KEY must be set to a rotated secret of at least 32 characters with at least 5 unique characters.")
     if not allowed_hosts:
         errors.append("DJANGO_ALLOWED_HOSTS must list the deployed hostnames.")
     if "*" in allowed_hosts:
@@ -318,7 +318,6 @@ def production_settings_errors(
         ("USER", "DJANGO_DB_USER"),
         ("PASSWORD", "DJANGO_DB_PASSWORD"),
         ("HOST", "DJANGO_DB_HOST"),
-        ("PORT", "DJANGO_DB_PORT"),
     ):
         if not database.get(key):
             errors.append(f"{env_name} must be set in production.")

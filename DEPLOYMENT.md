@@ -23,6 +23,8 @@ DJANGO_LOG_LEVEL=INFO
 managed database URL. Manual deployments may instead set
 `DJANGO_DB_ENGINE=django.db.backends.postgresql`, `DJANGO_DB_NAME`,
 `DJANGO_DB_USER`, `DJANGO_DB_PASSWORD`, `DJANGO_DB_HOST`, and `DJANGO_DB_PORT`.
+`DJANGO_DB_PORT` may be omitted when the database URL or host configuration uses
+PostgreSQL's default port.
 
 `DJANGO_CSRF_TRUSTED_ORIGINS` may be omitted for a same-origin deployment. If
 set, every entry must be an explicit HTTPS origin. Do not use local development

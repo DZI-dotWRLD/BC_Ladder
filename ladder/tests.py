@@ -1723,6 +1723,15 @@ class ProductionSettingsValidationTests(TestCase):
         self.assertEqual(database["CONN_MAX_AGE"], 600)
         self.assertTrue(database["CONN_HEALTH_CHECKS"])
 
+    def test_database_url_without_port_is_valid_for_render_postgresql(self):
+        database = build_database_config("postgresql://bc_ladder:secret@db.internal/bc_ladder")["default"]
+        kwargs = self.valid_kwargs()
+        kwargs["database"] = database
+
+        self.assertEqual(database["ENGINE"], "django.db.backends.postgresql")
+        self.assertEqual(database["PORT"], "")
+        self.assertEqual(production_settings_errors(**kwargs), [])
+
     def test_manual_database_env_path_remains_development_fallback(self):
         database = build_database_config(manual_env={})["default"]
 
@@ -1780,7 +1789,7 @@ class ProductionSettingsValidationTests(TestCase):
 
     def test_production_rejects_low_diversity_or_django_insecure_secret(self):
         kwargs = self.valid_kwargs()
-        kwargs["secret_key"] = "x" * 60
+        kwargs["secret_key"] = "x" * 32
 
         low_diversity_errors = production_settings_errors(**kwargs)
 
