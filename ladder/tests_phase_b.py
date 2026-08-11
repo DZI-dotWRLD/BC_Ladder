@@ -131,8 +131,16 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
 
         results = self.run_concurrently(
             [
-                lambda: accept_suggestion(get_user_model().objects.get(pk=team_b_players[0].user_id), MatchSuggestion.objects.get(pk=suggestion_b.pk), suggestion_b.version),
-                lambda: accept_suggestion(get_user_model().objects.get(pk=team_c_players[0].user_id), MatchSuggestion.objects.get(pk=suggestion_c.pk), suggestion_c.version),
+                lambda: accept_suggestion(
+                    get_user_model().objects.get(pk=team_b_players[0].user_id),
+                    MatchSuggestion.objects.get(pk=suggestion_b.pk),
+                    suggestion_b.version,
+                ),
+                lambda: accept_suggestion(
+                    get_user_model().objects.get(pk=team_c_players[0].user_id),
+                    MatchSuggestion.objects.get(pk=suggestion_c.pk),
+                    suggestion_c.version,
+                ),
             ]
         )
 
@@ -339,8 +347,12 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         ends_at = self.make_dt(2027, 9, 2, 20)
         match = self.create_scheduled_match(team_a, team_b, starts_at, ends_at)
         self.add_match_participants(match, team_a_players, team_b_players)
-        MatchResultSubmission.objects.create(match=match, submitting_team=team_a, submitting_user=team_a_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
-        MatchResultSubmission.objects.create(match=match, submitting_team=team_b, submitting_user=team_b_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
+        MatchResultSubmission.objects.create(
+            match=match, submitting_team=team_a, submitting_user=team_a_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
+        MatchResultSubmission.objects.create(
+            match=match, submitting_team=team_b, submitting_user=team_b_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
 
         results = self.run_concurrently(
             [
@@ -368,10 +380,18 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         second = self.create_scheduled_match(team_a, team_c, self.make_dt(2027, 9, 4, 18), self.make_dt(2027, 9, 4, 20))
         self.add_match_participants(first, team_a_players, team_b_players)
         self.add_match_participants(second, team_a_players, team_c_players)
-        MatchResultSubmission.objects.create(match=first, submitting_team=team_a, submitting_user=team_a_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
-        MatchResultSubmission.objects.create(match=first, submitting_team=team_b, submitting_user=team_b_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
-        MatchResultSubmission.objects.create(match=second, submitting_team=team_a, submitting_user=team_a_players[1].user, team_a_sets_won=2, team_b_sets_won=0)
-        MatchResultSubmission.objects.create(match=second, submitting_team=team_c, submitting_user=team_c_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
+        MatchResultSubmission.objects.create(
+            match=first, submitting_team=team_a, submitting_user=team_a_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
+        MatchResultSubmission.objects.create(
+            match=first, submitting_team=team_b, submitting_user=team_b_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
+        MatchResultSubmission.objects.create(
+            match=second, submitting_team=team_a, submitting_user=team_a_players[1].user, team_a_sets_won=2, team_b_sets_won=0
+        )
+        MatchResultSubmission.objects.create(
+            match=second, submitting_team=team_c, submitting_user=team_c_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
 
         results = self.run_concurrently(
             [
@@ -496,10 +516,18 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         second = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 11, 18), self.make_dt(2027, 9, 11, 20))
         self.add_match_participants(first, team_a_players, team_b_players)
         self.add_match_participants(second, team_a_players, team_b_players)
-        MatchResultSubmission.objects.create(match=first, submitting_team=team_a, submitting_user=team_a_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
-        MatchResultSubmission.objects.create(match=first, submitting_team=team_b, submitting_user=team_b_players[0].user, team_a_sets_won=2, team_b_sets_won=0)
-        MatchResultSubmission.objects.create(match=second, submitting_team=team_a, submitting_user=team_a_players[1].user, team_a_sets_won=0, team_b_sets_won=2)
-        MatchResultSubmission.objects.create(match=second, submitting_team=team_b, submitting_user=team_b_players[1].user, team_a_sets_won=0, team_b_sets_won=2)
+        MatchResultSubmission.objects.create(
+            match=first, submitting_team=team_a, submitting_user=team_a_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
+        MatchResultSubmission.objects.create(
+            match=first, submitting_team=team_b, submitting_user=team_b_players[0].user, team_a_sets_won=2, team_b_sets_won=0
+        )
+        MatchResultSubmission.objects.create(
+            match=second, submitting_team=team_a, submitting_user=team_a_players[1].user, team_a_sets_won=0, team_b_sets_won=2
+        )
+        MatchResultSubmission.objects.create(
+            match=second, submitting_team=team_b, submitting_user=team_b_players[1].user, team_a_sets_won=0, team_b_sets_won=2
+        )
 
         results = self.run_concurrently(
             [
@@ -511,7 +539,11 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         self.assertEqual([status for status, _ in results], ["ok", "ok"])
         team_a.standing.refresh_from_db()
         team_b.standing.refresh_from_db()
-        self.assertEqual((team_a.standing.matches_played, team_a.standing.wins, team_a.standing.losses, team_a.standing.points), (2, 1, 1, 3))
-        self.assertEqual((team_b.standing.matches_played, team_b.standing.wins, team_b.standing.losses, team_b.standing.points), (2, 1, 1, 3))
+        self.assertEqual(
+            (team_a.standing.matches_played, team_a.standing.wins, team_a.standing.losses, team_a.standing.points), (2, 1, 1, 3)
+        )
+        self.assertEqual(
+            (team_b.standing.matches_played, team_b.standing.wins, team_b.standing.losses, team_b.standing.points), (2, 1, 1, 3)
+        )
         self.assertEqual(ConfirmedMatchResult.objects.count(), 2)
         self.assertEqual(PointLedger.objects.count(), 4)

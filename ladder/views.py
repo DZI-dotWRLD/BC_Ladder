@@ -32,11 +32,7 @@ from .services import (
 
 
 def _profile_for_request(request):
-    profile = (
-        PlayerProfile.objects.select_related("user", "team")
-        .filter(user=request.user)
-        .first()
-    )
+    profile = PlayerProfile.objects.select_related("user", "team").filter(user=request.user).first()
     if profile is None:
         raise PlayerProfile.DoesNotExist
     return profile
@@ -51,11 +47,7 @@ def _profile_or_setup(request):
 
 
 def _active_membership(profile):
-    return (
-        TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_ACTIVE)
-        .select_related("team")
-        .first()
-    )
+    return TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_ACTIVE).select_related("team").first()
 
 
 def _active_team(profile):
@@ -140,7 +132,9 @@ def team_detail(request):
     members = []
     if team:
         member_ids = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).values_list("player_id", flat=True)
-        members = PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
+        members = (
+            PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
+        )
     return render(
         request,
         "ladder/team.html",

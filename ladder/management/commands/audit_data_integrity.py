@@ -87,10 +87,13 @@ def audit_memberships():
             )
         )
 
-    wrong_division = TeamMembership.objects.filter(status=TeamMembership.STATUS_ACTIVE).exclude(
-        Q(player__gender="male", team__division=Team.DIVISION_MENS)
-        | Q(player__gender="female", team__division=Team.DIVISION_WOMENS)
-    ).select_related("player", "team")
+    wrong_division = (
+        TeamMembership.objects.filter(status=TeamMembership.STATUS_ACTIVE)
+        .exclude(
+            Q(player__gender="male", team__division=Team.DIVISION_MENS) | Q(player__gender="female", team__division=Team.DIVISION_WOMENS)
+        )
+        .select_related("player", "team")
+    )
     for membership in wrong_division.order_by("id"):
         findings.append(
             error(
@@ -139,9 +142,7 @@ def audit_reservations():
 
     findings.extend(
         audit_overlaps(
-            MatchReservation.objects.filter(status=MatchReservation.STATUS_ACTIVE).order_by(
-                "player_id", "starts_at", "ends_at", "id"
-            ),
+            MatchReservation.objects.filter(status=MatchReservation.STATUS_ACTIVE).order_by("player_id", "starts_at", "ends_at", "id"),
             "reservation.overlap_active",
             "reservation_id",
         )

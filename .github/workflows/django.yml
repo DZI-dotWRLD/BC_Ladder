@@ -29,6 +29,9 @@ jobs:
       - name: Run Ruff lint
         run: python -m ruff check .
 
+      - name: Run Ruff format check
+        run: python -m ruff format --check .
+
       - name: Audit production dependencies
         run: python -m pip_audit -r requirements.txt
 

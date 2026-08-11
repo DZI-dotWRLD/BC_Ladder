@@ -119,10 +119,7 @@ class Command(BaseCommand):
             )
 
     def _refresh_standings(self, teams):
-        stats = {
-            team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0}
-            for team in teams
-        }
+        stats = {team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0} for team in teams}
         completed_results = ConfirmedMatchResult.objects.filter(
             winning_team__in=teams,
             losing_team__in=teams,

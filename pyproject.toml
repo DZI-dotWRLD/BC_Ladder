@@ -6,6 +6,7 @@ line-length = 140
 select = ["F"]
 
 [tool.ruff.format]
+exclude = ["ladder/migrations/*.py"]
 quote-style = "double"
 indent-style = "space"
 line-ending = "lf"

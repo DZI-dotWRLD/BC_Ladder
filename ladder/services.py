@@ -86,11 +86,7 @@ def _active_memberships_for_team(team):
 
 
 def _active_team_for_player(player):
-    membership = (
-        TeamMembership.objects.filter(player=player, status=TeamMembership.STATUS_ACTIVE)
-        .select_related("team")
-        .first()
-    )
+    membership = TeamMembership.objects.filter(player=player, status=TeamMembership.STATUS_ACTIVE).select_related("team").first()
     return membership.team if membership else player.team
 
 
@@ -99,22 +95,14 @@ def _player_belongs_to_team(player, team):
 
 
 def _suggestion_side_for_player(suggestion, player):
-    participant = (
-        suggestion.participants.select_related("team")
-        .filter(player=player)
-        .first()
-    )
+    participant = suggestion.participants.select_related("team").filter(player=player).first()
     if participant is None:
         return None
     return participant.team
 
 
 def _match_team_for_participant(match, player):
-    participant = (
-        match.participants.select_related("team")
-        .filter(player=player)
-        .first()
-    )
+    participant = match.participants.select_related("team").filter(player=player).first()
     if participant:
         return participant.team
     return None
@@ -173,21 +161,14 @@ def _get_locked_standings_for_teams(*teams):
         )
     standings = {
         standing.team_id: standing
-        for standing in LadderStanding.objects.select_for_update()
-        .filter(team__in=ordered_teams)
-        .select_related("team")
-        .order_by("team_id")
+        for standing in LadderStanding.objects.select_for_update().filter(team__in=ordered_teams).select_related("team").order_by("team_id")
     }
     return {team.id: standings[team.id] for team in teams}
 
 
 def recalculate_ladder_positions(division):
     with transaction.atomic():
-        standings = list(
-            LadderStanding.objects.select_for_update()
-            .filter(team__division=division)
-            .select_related("team")
-        )
+        standings = list(LadderStanding.objects.select_for_update().filter(team__division=division).select_related("team"))
         ordered = sorted(
             standings,
             key=lambda standing: (
@@ -211,10 +192,7 @@ def reconcile_ladder_standings(division=None):
         teams = teams.filter(division=division)
     teams = list(teams.order_by("division", "name", "id"))
     team_ids = [team.id for team in teams]
-    stats = {
-        team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0}
-        for team in teams
-    }
+    stats = {team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0} for team in teams}
     results = ConfirmedMatchResult.objects.filter(
         winning_team_id__in=team_ids,
         losing_team_id__in=team_ids,
@@ -249,9 +227,7 @@ def request_membership_change(actor, player, target_team=None, action="join"):
     with transaction.atomic():
         locked_player = PlayerProfile.objects.select_for_update().get(pk=player.pk)
         current_active = (
-            TeamMembership.objects.select_for_update()
-            .filter(player=locked_player, status=TeamMembership.STATUS_ACTIVE)
-            .first()
+            TeamMembership.objects.select_for_update().filter(player=locked_player, status=TeamMembership.STATUS_ACTIVE).first()
         )
 
         if action == "request_removal":
@@ -275,11 +251,7 @@ def request_membership_change(actor, player, target_team=None, action="join"):
             raise InvalidInput("Player already has an active team membership.")
 
         _validate_player_division(locked_player, locked_team)
-        active_count = (
-            TeamMembership.objects.select_for_update()
-            .filter(team=locked_team, status=TeamMembership.STATUS_ACTIVE)
-            .count()
-        )
+        active_count = TeamMembership.objects.select_for_update().filter(team=locked_team, status=TeamMembership.STATUS_ACTIVE).count()
         legacy_count = locked_team.players.exclude(pk=locked_player.pk).count()
         if max(active_count, legacy_count) >= 3:
             raise InvalidInput("Team already has three active members.")
@@ -337,9 +309,7 @@ def cancel_match(admin_actor, match):
             return locked_match
 
         reservations = list(
-            locked_match.reservations.select_for_update()
-            .filter(status=MatchReservation.STATUS_ACTIVE)
-            .order_by("player_id", "id")
+            locked_match.reservations.select_for_update().filter(status=MatchReservation.STATUS_ACTIVE).order_by("player_id", "id")
         )
         availability_by_id = {
             availability.id: availability
@@ -352,9 +322,9 @@ def cancel_match(admin_actor, match):
             reservation.save(update_fields=["status"])
             availability = availability_by_id.get(reservation.availability_id)
             if availability and availability.status == AvailabilitySlot.STATUS_CONSUMED:
-                has_other_active = availability.match_reservations.exclude(pk=reservation.pk).filter(
-                    status=MatchReservation.STATUS_ACTIVE
-                ).exists()
+                has_other_active = (
+                    availability.match_reservations.exclude(pk=reservation.pk).filter(status=MatchReservation.STATUS_ACTIVE).exists()
+                )
                 if not has_other_active:
                     availability.status = AvailabilitySlot.STATUS_ACTIVE
                     availability.save(update_fields=["status"])
@@ -370,11 +340,7 @@ def resolve_score_conflict(admin_actor, notification, official_submission=None, 
     if official_submission is None:
         raise InvalidInput("An official submission is required to resolve a score conflict.")
     with transaction.atomic():
-        locked_notification = (
-            AdminNotification.objects.select_for_update()
-            .select_related("match")
-            .get(pk=notification.pk)
-        )
+        locked_notification = AdminNotification.objects.select_for_update().select_related("match").get(pk=notification.pk)
         if locked_notification.notification_type != AdminNotification.TYPE_SCORE_CONFLICT:
             raise InvalidInput("Notification is not a score conflict.")
         locked_submission = (
@@ -708,9 +674,7 @@ def _has_reservation_conflict(player_ids, starts_at, ends_at):
 
 
 def _players_for_suggestion(suggestion):
-    participants = list(
-        suggestion.participants.select_related("player", "team").order_by("side", "lineup_order", "player_id")
-    )
+    participants = list(suggestion.participants.select_related("player", "team").order_by("side", "lineup_order", "player_id"))
     by_side = defaultdict(list)
     for participant in participants:
         by_side[participant.side].append(participant)
@@ -739,11 +703,7 @@ def _availability_covering(player, starts_at, ends_at):
 def accept_suggestion(actor, suggestion, expected_version):
     actor_profile = _profile_for_user(actor)
     with transaction.atomic():
-        locked = (
-            MatchSuggestion.objects.select_for_update()
-            .select_related("team_a", "team_b")
-            .get(pk=suggestion.pk)
-        )
+        locked = MatchSuggestion.objects.select_for_update().select_related("team_a", "team_b").get(pk=suggestion.pk)
         if locked.version != expected_version:
             raise StaleState("Suggestion version is stale.")
         if locked.status in {MatchSuggestion.STATUS_EXPIRED, MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED}:
@@ -940,10 +900,7 @@ def submit_match_result(actor, match, normalized_sets):
                 "team_b_sets_won": score["team_b_sets_won"],
             },
         )
-        new_signature = tuple(
-            (item["set_order"], item["set_type"], item["team_a_score"], item["team_b_score"])
-            for item in score["sets"]
-        )
+        new_signature = tuple((item["set_order"], item["set_type"], item["team_a_score"], item["team_b_score"]) for item in score["sets"])
         if not created:
             if _submission_score_signature(submission) == new_signature:
                 return submission
@@ -1014,9 +971,7 @@ def get_match_winner_and_loser(match):
 def _winner_and_loser_from_submission(submission):
     match = submission.match
     if submission.sets.exists():
-        score = validate_match_score(
-            [(item.team_a_score, item.team_b_score) for item in submission.sets.order_by("set_order")]
-        )
+        score = validate_match_score([(item.team_a_score, item.team_b_score) for item in submission.sets.order_by("set_order")])
         return (match.team_a, match.team_b) if score["winner_team_side"] == "team_a" else (match.team_b, match.team_a)
     if submission.team_a_sets_won > submission.team_b_sets_won:
         return (match.team_a, match.team_b)

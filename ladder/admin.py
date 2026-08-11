@@ -148,6 +148,7 @@ class MatchAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_display = (
         "match",
@@ -297,8 +298,6 @@ class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
-
-
 
 
 admin.site.register(PlayerProfile, PlayerProfileAdmin)

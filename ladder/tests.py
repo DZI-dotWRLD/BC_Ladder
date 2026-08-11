@@ -66,14 +66,8 @@ class TeamMatchOptionTests(TestCase):
         self.team_a = Team.objects.create(name="Team A", division=Team.DIVISION_MENS)
         self.team_b = Team.objects.create(name="Team B", division=Team.DIVISION_MENS)
 
-        self.team_a_players = [
-            self.create_player(f"a-player-{index}", self.team_a)
-            for index in range(1, 3)
-        ]
-        self.team_b_players = [
-            self.create_player(f"b-player-{index}", self.team_b)
-            for index in range(1, 3)
-        ]
+        self.team_a_players = [self.create_player(f"a-player-{index}", self.team_a) for index in range(1, 3)]
+        self.team_b_players = [self.create_player(f"b-player-{index}", self.team_b) for index in range(1, 3)]
 
     def create_player(self, username, team):
         user = get_user_model().objects.create_user(username=username)
@@ -172,10 +166,7 @@ class TeamMatchOptionTests(TestCase):
             self.team_a,
             self.week_start_date,
         )
-        result_pair_ids = [
-            {result["players"][0].id, result["players"][1].id}
-            for result in pair_availability
-        ]
+        result_pair_ids = [{result["players"][0].id, result["players"][1].id} for result in pair_availability]
 
         self.assertEqual(len(pair_availability), 2)
         self.assertIn(
@@ -437,10 +428,10 @@ class ChallengeModelTests(TestCase):
 
     def test_challenge_start_time_must_be_before_end_time(self):
         challenge = Challenge(
-            challenger_team = self.team_a,
+            challenger_team=self.team_a,
             opponent_team=self.team_b,
-            proposed_week_start_date = self.week_start_date,
-            proposed_day_of_week = AvailabilitySlot.DayOfWeek.MONDAY,
+            proposed_week_start_date=self.week_start_date,
+            proposed_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             proposed_start_time=time(19, 0),
             proposed_end_time=time(18, 0),
         )
@@ -470,7 +461,6 @@ class MatchModelTests(TestCase):
         )
 
         match.full_clean()
-        
 
         self.assertEqual(match.status, Match.STATUS_SCHEDULED)
 
@@ -481,7 +471,7 @@ class MatchModelTests(TestCase):
             scheduled_week_start_date=self.week_start_date,
             scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             scheduled_start_time=time(18, 0),
-           scheduled_end_time=time(19, 0),
+            scheduled_end_time=time(19, 0),
         )
 
         with self.assertRaises(ValidationError):
@@ -502,10 +492,10 @@ class MatchModelTests(TestCase):
 
     def test_match_start_time_must_be_before_end_time(self):
         match = Match(
-            team_a = self.team_a,
+            team_a=self.team_a,
             team_b=self.team_b,
-            scheduled_week_start_date = self.week_start_date,
-            scheduled_day_of_week = AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             scheduled_start_time=time(19, 0),
             scheduled_end_time=time(18, 0),
         )
@@ -515,10 +505,10 @@ class MatchModelTests(TestCase):
 
     def test_match_start_time_must_be_not_equal_end_time(self):
         match = Match(
-            team_a = self.team_a,
+            team_a=self.team_a,
             team_b=self.team_b,
-            scheduled_week_start_date = self.week_start_date,
-            scheduled_day_of_week = AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_week_start_date=self.week_start_date,
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             scheduled_start_time=time(18, 0),
             scheduled_end_time=time(18, 0),
         )
@@ -527,9 +517,7 @@ class MatchModelTests(TestCase):
             match.full_clean()
 
 
-
 class MatchResultSubmissionTests(TestCase):
-
     def setUp(self):
         self.week_start_date = date(2026, 6, 1)
         self.team_a = Team.objects.create(
@@ -544,68 +532,61 @@ class MatchResultSubmissionTests(TestCase):
             name="Outside Team",
             division=Team.DIVISION_MENS,
         )
-        
+
         self.match = Match.objects.create(
-            team_a = self.team_a,
-            team_b = self.team_b,
+            team_a=self.team_a,
+            team_b=self.team_b,
             scheduled_week_start_date=self.week_start_date,
             scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             scheduled_start_time=time(18, 0),
             scheduled_end_time=time(19, 0),
-        )   
+        )
 
     def test_result_submission_can_be_created_by_team_a(self):
         submission = MatchResultSubmission(
-            match = self.match,
-            submitting_team = self.team_a,
-            team_a_sets_won = 2,
-            team_b_sets_won = 1,
-
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
 
         submission.full_clean()
 
     def test_result_submission_can_be_created_by_team_b(self):
         submission = MatchResultSubmission(
-            match = self.match,
-            submitting_team = self.team_b,
-            team_a_sets_won = 2,
-            team_b_sets_won = 1,
-
+            match=self.match,
+            submitting_team=self.team_b,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
 
         submission.full_clean()
 
     def test_result_submission_rejects_team_not_in_match(self):
         submission = MatchResultSubmission(
-            match = self.match,
-            submitting_team = self.outside_team,
-            team_a_sets_won = 2,
-            team_b_sets_won = 1,
-
+            match=self.match,
+            submitting_team=self.outside_team,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
 
         with self.assertRaises(ValidationError):
             submission.full_clean()
 
-
     def test_same_team_cannot_submit_twice_for_same_match(self):
         MatchResultSubmission.objects.create(
-            match= self.match,
-            submitting_team = self.team_a,
+            match=self.match,
+            submitting_team=self.team_a,
             team_a_sets_won=2,
             team_b_sets_won=1,
         )
 
         duplicate_submission = MatchResultSubmission(
-            match = self.match,
-            submitting_team = self.team_a,
-            team_a_sets_won = 2,
-            team_b_sets_won = 1,
-
+            match=self.match,
+            submitting_team=self.team_a,
+            team_a_sets_won=2,
+            team_b_sets_won=1,
         )
-
-
 
         with self.assertRaises(ValidationError):
             duplicate_submission.full_clean()
@@ -624,8 +605,8 @@ class MatchResultStatusServiceTests(TestCase):
         )
 
         self.match = Match.objects.create(
-            team_a = self.team_a,
-            team_b = self.team_b,
+            team_a=self.team_a,
+            team_b=self.team_b,
             scheduled_week_start_date=self.week_start_date,
             scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             scheduled_start_time=time(18, 0),
@@ -634,29 +615,26 @@ class MatchResultStatusServiceTests(TestCase):
 
     def test_match_result_status_waiting_when_less_than_two_submissions(self):
         MatchResultSubmission.objects.create(
-            match = self.match,
-            submitting_team = self.team_a,
+            match=self.match,
+            submitting_team=self.team_a,
             team_a_sets_won=2,
             team_b_sets_won=1,
-
         )
 
         status = get_match_status(self.match)
 
         self.assertEqual(status, "waiting_for_submissions")
 
-
     def test_match_result_status_confirmed_when_submissions_match(self):
         MatchResultSubmission.objects.create(
-            match = self.match,
-            submitting_team = self.team_a,
+            match=self.match,
+            submitting_team=self.team_a,
             team_a_sets_won=2,
             team_b_sets_won=1,
-
         )
         MatchResultSubmission.objects.create(
-            match = self.match,
-            submitting_team = self.team_b,
+            match=self.match,
+            submitting_team=self.team_b,
             team_a_sets_won=2,
             team_b_sets_won=1,
         )
@@ -664,18 +642,18 @@ class MatchResultStatusServiceTests(TestCase):
         status = get_match_status(self.match)
 
         self.assertEqual(status, "confirmed")
-    
+
     def test_match_result_status_conflict_when_submissions_disagree(self):
         MatchResultSubmission.objects.create(
-            match = self.match,
-            submitting_team = self.team_a,
+            match=self.match,
+            submitting_team=self.team_a,
             team_a_sets_won=2,
             team_b_sets_won=1,
         )
 
         MatchResultSubmission.objects.create(
-            match = self.match,
-            submitting_team = self.team_b,
+            match=self.match,
+            submitting_team=self.team_b,
             team_a_sets_won=1,
             team_b_sets_won=2,
         )
@@ -683,7 +661,6 @@ class MatchResultStatusServiceTests(TestCase):
         status = get_match_status(self.match)
 
         self.assertEqual(status, "conflict")
-
 
     def test_complete_match_when_result_confirmed(self):
         MatchResultSubmission.objects.create(
@@ -705,7 +682,6 @@ class MatchResultStatusServiceTests(TestCase):
         self.assertTrue(completed)
         self.assertEqual(self.match.status, Match.STATUS_COMPLETED)
 
-
     def test_does_not_complete_match_when_result_conflicts(self):
         MatchResultSubmission.objects.create(
             match=self.match,
@@ -725,7 +701,6 @@ class MatchResultStatusServiceTests(TestCase):
         self.match.refresh_from_db()
         self.assertFalse(completed)
         self.assertEqual(self.match.status, Match.STATUS_SCHEDULED)
-
 
     def test_does_not_complete_match_when_waiting_for_submissions(self):
         MatchResultSubmission.objects.create(
@@ -808,7 +783,6 @@ class MatchResultStatusServiceTests(TestCase):
         self.assertEqual(winner, [])
 
 
-
 class AdminNotificationTests(TestCase):
     def setUp(self):
         self.week_start_date = date(2026, 6, 1)
@@ -833,8 +807,8 @@ class AdminNotificationTests(TestCase):
 
     def test_admin_notification_can_be_created_for_match(self):
         notification = AdminNotification(
-        match=self.match,
-        message="Scores do not match.",
+            match=self.match,
+            message="Scores do not match.",
         )
 
         notification.full_clean()
@@ -844,20 +818,19 @@ class AdminNotificationTests(TestCase):
 
     def test_admin_notification_defaults_to_unresolved(self):
         notification = AdminNotification.objects.create(
-        match=self.match,
-        message="Scores do not match.",
+            match=self.match,
+            message="Scores do not match.",
         )
 
         self.assertFalse(notification.is_resolved)
 
     def test_match_can_access_admin_notifications(self):
         notification = AdminNotification.objects.create(
-        match=self.match,
-        message="Scores do not match.",
+            match=self.match,
+            message="Scores do not match.",
         )
 
         self.assertIn(notification, self.match.admin_notifications.all())
-
 
     def test_conflict_notification_is_created_when_result_conflict(self):
         MatchResultSubmission.objects.create(
@@ -1001,11 +974,14 @@ class RemediationServiceTests(TestCase):
         lineups = generate_team_lineups(team, (starts_at, ends_at))
         lineup_ids = [tuple(player.id for player in lineup["players"]) for lineup in lineups]
 
-        self.assertEqual(lineup_ids, [
-            (players[0].id, players[1].id),
-            (players[0].id, players[2].id),
-            (players[1].id, players[2].id),
-        ])
+        self.assertEqual(
+            lineup_ids,
+            [
+                (players[0].id, players[1].id),
+                (players[0].id, players[2].id),
+                (players[1].id, players[2].id),
+            ],
+        )
 
     def test_dual_acceptance_confirms_match_and_consumes_only_four_players(self):
         team_a, team_a_players = self.create_team_with_members("accept-a", 3)
@@ -1153,8 +1129,12 @@ class RemediationServiceTests(TestCase):
         team_a.standing.refresh_from_db()
         team_b.standing.refresh_from_db()
 
-        self.assertEqual((team_a.standing.matches_played, team_a.standing.wins, team_a.standing.losses, team_a.standing.points), (1, 1, 0, 3))
-        self.assertEqual((team_b.standing.matches_played, team_b.standing.wins, team_b.standing.losses, team_b.standing.points), (1, 0, 1, 0))
+        self.assertEqual(
+            (team_a.standing.matches_played, team_a.standing.wins, team_a.standing.losses, team_a.standing.points), (1, 1, 0, 3)
+        )
+        self.assertEqual(
+            (team_b.standing.matches_played, team_b.standing.wins, team_b.standing.losses, team_b.standing.points), (1, 0, 1, 0)
+        )
         self.assertEqual(team_a.standing.position, 1)
 
 
@@ -1841,9 +1821,7 @@ class ProductionSettingsValidationTests(TestCase):
         errors = production_settings_errors(**kwargs)
 
         self.assertTrue(any("Set both DJANGO_SECURE_PROXY_SSL_HEADER_NAME" in error for error in errors))
-        self.assertTrue(
-            any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" in error for error in errors)
-        )
+        self.assertTrue(any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS" in error for error in errors))
         self.assertTrue(any("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_SECONDS" in error for error in errors))
 
 

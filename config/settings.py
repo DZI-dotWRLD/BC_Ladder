@@ -22,6 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
+
 def env_bool(name, default=False):
     return os.environ.get(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
@@ -46,44 +47,44 @@ CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 # Application definition
 
 INSTALLED_APPS = [
-    'ladder',
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
+    "ladder",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
+    "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'config.wsgi.application'
+WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
@@ -112,16 +113,16 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -129,7 +130,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "America/New_York")
 
@@ -141,7 +142,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 WHITENOISE_MANIFEST_STRICT = env_bool("DJANGO_WHITENOISE_MANIFEST_STRICT", not DEBUG)
 STATICFILES_STORAGE_BACKEND = (
@@ -262,10 +263,7 @@ def production_settings_errors(
         or len(secret_key) < 50
         or len(set(secret_key)) < 5
     ):
-        errors.append(
-            "DJANGO_SECRET_KEY must be set to a rotated secret of at least 50 characters "
-            "with at least 5 unique characters."
-        )
+        errors.append("DJANGO_SECRET_KEY must be set to a rotated secret of at least 50 characters with at least 5 unique characters.")
     if not allowed_hosts:
         errors.append("DJANGO_ALLOWED_HOSTS must list the deployed hostnames.")
     if "*" in allowed_hosts:
@@ -286,10 +284,7 @@ def production_settings_errors(
     if not secure_ssl_redirect:
         errors.append("DJANGO_SECURE_SSL_REDIRECT must be true in production.")
     if bool(proxy_ssl_header_name) != bool(proxy_ssl_header_value):
-        errors.append(
-            "Set both DJANGO_SECURE_PROXY_SSL_HEADER_NAME and "
-            "DJANGO_SECURE_PROXY_SSL_HEADER_VALUE, or set neither."
-        )
+        errors.append("Set both DJANGO_SECURE_PROXY_SSL_HEADER_NAME and DJANGO_SECURE_PROXY_SSL_HEADER_VALUE, or set neither.")
     if hsts_preload and not hsts_include_subdomains:
         errors.append("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=true.")
     if hsts_preload and hsts_seconds < 31536000:
@@ -308,5 +303,6 @@ def production_settings_errors(
     if not whitenoise_manifest_strict:
         errors.append("DJANGO_WHITENOISE_MANIFEST_STRICT must not be false in production.")
     return errors
+
 
 validate_production_settings()
