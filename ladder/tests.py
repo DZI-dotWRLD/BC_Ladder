@@ -983,6 +983,53 @@ class RemediationServiceTests(TestCase):
         self.assertIsNone(players[0].team)
         self.assertTrue(TeamMembership.objects.filter(team=team, player=players[0]).exists())
 
+    def test_player_join_request_is_pending_idempotent_and_admin_approved(self):
+        team = Team.objects.create(name="join-request-team", division=Team.DIVISION_MENS)
+        player = self.create_profile("join-request-player")
+        admin_profile = self.create_profile("join-request-admin", is_staff=True)
+
+        first = request_membership_change(player.user, player, team, "request_join")
+        second = request_membership_change(player.user, player, team, "request_join")
+
+        player.refresh_from_db()
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(first.status, TeamMembership.STATUS_JOIN_REQUESTED)
+        self.assertIsNone(player.team)
+
+        approved = resolve_membership_request(admin_profile.user, first, "approve")
+
+        player.refresh_from_db()
+        self.assertEqual(approved.status, TeamMembership.STATUS_ACTIVE)
+        self.assertEqual(player.team, team)
+
+    def test_admin_join_approval_rechecks_capacity_and_rejects_cleanly(self):
+        team, _players = self.create_team_with_members("join-full", 2)
+        requester = self.create_profile("join-full-requester")
+        request = request_membership_change(requester.user, requester, team, "request_join")
+        late_player = self.create_profile("join-full-late")
+        request_membership_change(late_player.user, late_player, team, "join")
+        admin_profile = self.create_profile("join-full-admin", is_staff=True)
+
+        with self.assertRaises(InvalidInput):
+            resolve_membership_request(admin_profile.user, request, "approve")
+
+        requester.refresh_from_db()
+        request.refresh_from_db()
+        self.assertIsNone(requester.team)
+        self.assertEqual(request.status, TeamMembership.STATUS_JOIN_REQUESTED)
+
+    def test_admin_rejects_join_request_without_active_membership(self):
+        team = Team.objects.create(name="join-reject-team", division=Team.DIVISION_MENS)
+        player = self.create_profile("join-reject-player")
+        admin_profile = self.create_profile("join-reject-admin", is_staff=True)
+        request = request_membership_change(player.user, player, team, "request_join")
+
+        rejected = resolve_membership_request(admin_profile.user, request, "reject")
+
+        player.refresh_from_db()
+        self.assertEqual(rejected.status, TeamMembership.STATUS_INACTIVE)
+        self.assertIsNone(player.team)
+
     def test_save_availability_is_idempotent_and_rejects_overlap(self):
         team, players = self.create_team_with_members("availability", 1)
         starts_at = self.make_dt(2026, 7, 6, 18)
@@ -1268,7 +1315,7 @@ class PhaseARequestTests(TestCase):
         self.assertContains(response, "Dashboard")
         self.assertContains(response, team.name)
 
-    def test_team_join_is_post_only_and_scoped_to_player_division(self):
+    def test_team_join_is_post_only_scoped_to_player_division_and_pending(self):
         profile = self.create_profile("joiner")
         mens_team = Team.objects.create(name="Join Team", division=Team.DIVISION_MENS)
         self.client.force_login(profile.user)
@@ -1279,8 +1326,48 @@ class PhaseARequestTests(TestCase):
         profile.refresh_from_db()
         self.assertEqual(get_response.status_code, 302)
         self.assertEqual(post_response.status_code, 302)
-        self.assertEqual(profile.team, mens_team)
-        self.assertTrue(TeamMembership.objects.filter(player=profile, team=mens_team).exists())
+        self.assertIsNone(profile.team)
+        self.assertTrue(
+            TeamMembership.objects.filter(
+                player=profile,
+                team=mens_team,
+                status=TeamMembership.STATUS_JOIN_REQUESTED,
+            ).exists()
+        )
+
+    def test_team_page_shows_pending_join_request_and_blocks_second_request(self):
+        profile = self.create_profile("pending-view")
+        requested_team = Team.objects.create(name="Requested Team", division=Team.DIVISION_MENS)
+        other_team = Team.objects.create(name="Other Requested Team", division=Team.DIVISION_MENS)
+        request_membership_change(profile.user, profile, requested_team, "request_join")
+        self.client.force_login(profile.user)
+
+        page_response = self.client.get(reverse("ladder:team"))
+        post_response = self.client.post(reverse("ladder:join_team"), {"team": other_team.id})
+
+        self.assertContains(page_response, "Requested Team")
+        self.assertContains(page_response, "pending admin review")
+        self.assertEqual(post_response.status_code, 302)
+        self.assertFalse(TeamMembership.objects.filter(player=profile, team=other_team).exists())
+
+    def test_team_join_rejects_wrong_division_and_existing_active_team(self):
+        womens_profile = self.create_profile("wrong-division", gender=PlayerProfile.GENDER_FEMALE)
+        mens_team = Team.objects.create(name="Mens Only", division=Team.DIVISION_MENS)
+        self.client.force_login(womens_profile.user)
+
+        wrong_division_response = self.client.post(reverse("ladder:join_team"), {"team": mens_team.id})
+
+        active_profile = self.create_profile("already-active")
+        current_team = Team.objects.create(name="Current Team", division=Team.DIVISION_MENS)
+        other_team = Team.objects.create(name="Another Team", division=Team.DIVISION_MENS)
+        request_membership_change(active_profile.user, active_profile, current_team, "join")
+        self.client.force_login(active_profile.user)
+        active_response = self.client.post(reverse("ladder:join_team"), {"team": other_team.id})
+
+        self.assertEqual(wrong_division_response.status_code, 302)
+        self.assertFalse(TeamMembership.objects.filter(player=womens_profile, team=mens_team).exists())
+        self.assertEqual(active_response.status_code, 302)
+        self.assertFalse(TeamMembership.objects.filter(player=active_profile, team=other_team).exists())
 
     def test_team_create_is_post_only_and_adds_creator_as_first_member(self):
         profile = self.create_profile("team-creator")

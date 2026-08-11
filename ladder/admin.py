@@ -46,7 +46,29 @@ class TeamMembershipAdmin(admin.ModelAdmin):
     list_filter = ("status", "team__division", "removal_requested_at")
     list_select_related = ("player__user", "team", "reviewed_by")
     readonly_fields = ("created_at", "updated_at", "effective_from", "effective_to", "reviewed_by", "resolved_at")
-    actions = ("approve_removal_requests", "reject_removal_requests")
+    actions = ("approve_join_requests", "reject_join_requests", "approve_removal_requests", "reject_removal_requests")
+
+    @admin.action(description="Approve selected join requests")
+    def approve_join_requests(self, request, queryset):
+        completed = 0
+        for membership in queryset.filter(status=TeamMembership.STATUS_JOIN_REQUESTED):
+            try:
+                resolve_membership_request(request.user, membership, "approve")
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Approved {completed} join request(s).")
+
+    @admin.action(description="Reject selected join requests")
+    def reject_join_requests(self, request, queryset):
+        completed = 0
+        for membership in queryset.filter(status=TeamMembership.STATUS_JOIN_REQUESTED):
+            try:
+                resolve_membership_request(request.user, membership, "reject")
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Rejected {completed} join request(s).")
 
     @admin.action(description="Approve selected removal requests")
     def approve_removal_requests(self, request, queryset):

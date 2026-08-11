@@ -238,7 +238,7 @@ def request_membership_change(actor, player, target_team=None, action="join"):
                 current_active.save(update_fields=["removal_requested_at", "updated_at"])
             return current_active
 
-        if action != "join":
+        if action not in {"join", "request_join"}:
             raise InvalidInput("Unsupported membership action.")
         if target_team is None:
             raise InvalidInput("A target team is required.")
@@ -255,6 +255,25 @@ def request_membership_change(actor, player, target_team=None, action="join"):
         legacy_count = locked_team.players.exclude(pk=locked_player.pk).count()
         if max(active_count, legacy_count) >= 3:
             raise InvalidInput("Team already has three active members.")
+
+        if action == "request_join":
+            existing_request = (
+                TeamMembership.objects.select_for_update()
+                .filter(player=locked_player, status=TeamMembership.STATUS_JOIN_REQUESTED)
+                .order_by("created_at", "id")
+                .first()
+            )
+            if existing_request:
+                if existing_request.team_id == locked_team.id:
+                    return existing_request
+                raise InvalidInput("Player already has a pending team request.")
+
+            return TeamMembership.objects.create(
+                player=locked_player,
+                team=locked_team,
+                status=TeamMembership.STATUS_JOIN_REQUESTED,
+                effective_from=timezone.now(),
+            )
 
         membership = TeamMembership.objects.create(
             player=locked_player,
@@ -314,20 +333,50 @@ def resolve_membership_request(admin_actor, membership, decision):
         raise InvalidInput("Decision must be approve or reject.")
 
     with transaction.atomic():
-        locked_membership = TeamMembership.objects.select_for_update().get(pk=membership.pk)
+        locked_membership = TeamMembership.objects.select_for_update().select_related("player", "team").get(pk=membership.pk)
         now = timezone.now()
         locked_membership.reviewed_by = admin_actor
         locked_membership.resolved_at = now
-        if decision == "approve":
-            locked_membership.status = TeamMembership.STATUS_INACTIVE
-            locked_membership.effective_to = now
-            locked_membership.player.team = None
-            locked_membership.player.save(update_fields=["team"])
+
+        if locked_membership.status == TeamMembership.STATUS_JOIN_REQUESTED:
+            if decision == "approve":
+                locked_player = PlayerProfile.objects.select_for_update().get(pk=locked_membership.player_id)
+                locked_team = Team.objects.select_for_update().get(pk=locked_membership.team_id)
+                current_active = (
+                    TeamMembership.objects.select_for_update().filter(player=locked_player, status=TeamMembership.STATUS_ACTIVE).first()
+                )
+                if current_active:
+                    raise InvalidInput("Player already has an active team membership.")
+                _validate_player_division(locked_player, locked_team)
+                active_count = (
+                    TeamMembership.objects.select_for_update().filter(team=locked_team, status=TeamMembership.STATUS_ACTIVE).count()
+                )
+                legacy_count = locked_team.players.exclude(pk=locked_player.pk).count()
+                if locked_team.status != Team.STATUS_ACTIVE:
+                    raise InvalidInput("Cannot join a retired team.")
+                if max(active_count, legacy_count) >= 3:
+                    raise InvalidInput("Team already has three active members.")
+                locked_membership.status = TeamMembership.STATUS_ACTIVE
+                locked_membership.effective_from = now
+                locked_player.team = locked_team
+                locked_player.save(update_fields=["team"])
+            else:
+                locked_membership.status = TeamMembership.STATUS_INACTIVE
+                locked_membership.effective_to = now
+        elif locked_membership.removal_requested_at:
+            if decision == "approve":
+                locked_membership.status = TeamMembership.STATUS_INACTIVE
+                locked_membership.effective_to = now
+                locked_membership.player.team = None
+                locked_membership.player.save(update_fields=["team"])
+            else:
+                locked_membership.removal_requested_at = None
         else:
-            locked_membership.removal_requested_at = None
+            raise InvalidInput("Membership does not have a pending request.")
         locked_membership.save(
             update_fields=[
                 "status",
+                "effective_from",
                 "effective_to",
                 "removal_requested_at",
                 "reviewed_by",

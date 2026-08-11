@@ -24,18 +24,26 @@
             {% endif %}
         {% else %}
             <h2>No active team</h2>
-            <p class="muted">Choose a team in your division.</p>
+            {% if pending_join_request %}
+                <p class="muted">Your request to join {{ pending_join_request.team.name }} is pending admin review.</p>
+            {% else %}
+                <p class="muted">Create a team or request to join an existing team in your division.</p>
+            {% endif %}
         {% endif %}
     </section>
     {% if not team %}
         <section class="panel">
             <div class="eyebrow">Membership</div>
-            <h2>Join Team</h2>
-            <form method="post" action="{% url 'ladder:join_team' %}">
-                {% csrf_token %}
-                {{ join_form.as_p }}
-                <button type="submit">Join team</button>
-            </form>
+            <h2>Request to Join Team</h2>
+            {% if pending_join_request %}
+                <p class="muted">An administrator must approve or reject your current request before you can request another team.</p>
+            {% else %}
+                <form method="post" action="{% url 'ladder:join_team' %}">
+                    {% csrf_token %}
+                    {{ join_form.as_p }}
+                    <button type="submit">Request to join</button>
+                </form>
+            {% endif %}
         </section>
         <section class="panel">
             <div class="eyebrow">New team</div>

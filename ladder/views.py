@@ -131,10 +131,18 @@ def team_detail(request):
     membership = _active_membership(profile)
     team = membership.team if membership else profile.team
     members = []
+    pending_join_request = None
     if team:
         member_ids = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).values_list("player_id", flat=True)
         members = (
             PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
+        )
+    else:
+        pending_join_request = (
+            TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_JOIN_REQUESTED)
+            .select_related("team")
+            .order_by("created_at", "id")
+            .first()
         )
     return render(
         request,
@@ -144,6 +152,7 @@ def team_detail(request):
             "team": team,
             "members": members,
             "membership": membership,
+            "pending_join_request": pending_join_request,
             "join_form": TeamJoinForm(profile=profile),
             "create_form": TeamCreateForm(),
         },
@@ -179,8 +188,8 @@ def join_team(request):
     form = TeamJoinForm(request.POST, profile=profile)
     if form.is_valid():
         try:
-            request_membership_change(request.user, profile, form.cleaned_data["team"], "join")
-            messages.success(request, "Team membership updated.")
+            request_membership_change(request.user, profile, form.cleaned_data["team"], "request_join")
+            messages.success(request, "Team join request sent to the administrators.")
         except DomainError as error:
             _message_domain_error(request, error)
     else:

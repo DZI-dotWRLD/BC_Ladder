@@ -96,11 +96,13 @@ class PlayerProfile(models.Model):
 class TeamMembership(models.Model):
     STATUS_ACTIVE = "active"
     STATUS_INACTIVE = "inactive"
+    STATUS_JOIN_REQUESTED = "join_requested"
     STATUS_REMOVAL_REQUESTED = "removal_requested"
 
     STATUS_CHOICES = [
         (STATUS_ACTIVE, "Active"),
         (STATUS_INACTIVE, "Inactive"),
+        (STATUS_JOIN_REQUESTED, "Join requested"),
         (STATUS_REMOVAL_REQUESTED, "Removal requested"),
     ]
 

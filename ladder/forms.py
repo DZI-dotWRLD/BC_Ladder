@@ -24,11 +24,15 @@ class AvailabilityForm(forms.Form):
 
 
 class TeamJoinForm(forms.Form):
-    team = forms.ModelChoiceField(queryset=Team.active.none())
+    team = forms.ModelChoiceField(
+        queryset=Team.active.none(),
+        empty_label="Choose a team",
+        label="Team",
+    )
 
     def __init__(self, *args, profile=None, **kwargs):
         super().__init__(*args, **kwargs)
-        queryset = Team.active.order_by("division", "name")
+        queryset = Team.active.order_by("name", "id")
         if profile:
             if profile.gender == PlayerProfile.GENDER_MALE:
                 queryset = queryset.filter(division=Team.DIVISION_MENS)
