@@ -127,6 +127,9 @@ the managed PostgreSQL service and `RENDER_EXTERNAL_HOSTNAME` for the default
 `.onrender.com` host. For manual non-Render deployments, the older
 `DJANGO_DB_ENGINE`, `DJANGO_DB_NAME`, `DJANGO_DB_USER`, `DJANGO_DB_PASSWORD`,
 `DJANGO_DB_HOST`, and `DJANGO_DB_PORT` variables are still supported.
+For the Render Free trial, `build.sh` runs migrations during the build because
+Free web services do not provide Shell/pre-deploy access. Move migrations to a
+controlled release step before production.
 
 Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local

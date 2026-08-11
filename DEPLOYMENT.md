@@ -77,30 +77,33 @@ Render Free is appropriate for a first deployment trial, not production. Free
 Render PostgreSQL databases expire after 30 days, have a 1 GB limit, and do not
 include backups. Upgrade the database before storing real club data.
 
+Because Render Shell and pre-deploy commands are not available on Free web
+services, `build.sh` runs `migrate --noinput` and `audit_data_integrity` during
+the free trial build. Remove that trial-only migration step before production
+and move migrations to a controlled release/pre-deploy process.
+
 Recommended first deploy sequence:
 
 1. Push the branch to GitHub.
 2. In Render, create a new Blueprint from this repository.
 3. Let Render create the web service and PostgreSQL service from `render.yaml`.
 4. Wait for the first build/deploy to finish.
-5. Open a Render Shell for the web service and run:
+5. Confirm the build logs show:
 
    ```bash
    python manage.py migrate
    python manage.py audit_data_integrity
-   python manage.py createsuperuser
    ```
 
 6. Visit `https://<render-host>/health/` and confirm `{"status": "ok"}`.
-7. Log in at `/admin/` with the superuser.
+7. Register a temporary player account through `/accounts/register/`.
 
 `DJANGO_ALLOWED_HOSTS` is optional for the first `.onrender.com` trial because
 the app accepts Render's `RENDER_EXTERNAL_HOSTNAME` as the default host. Set
 `DJANGO_ALLOWED_HOSTS` explicitly when adding a custom domain.
 
 Do not run migrations inside the start command. That can create startup races
-and makes rollback harder. Use Render Shell for the first trial, or a
-pre-deploy command later if the chosen Render plan supports it.
+and makes rollback harder.
 
 ## Smoke checks
 
