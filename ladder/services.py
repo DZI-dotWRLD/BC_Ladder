@@ -267,6 +267,46 @@ def request_membership_change(actor, player, target_team=None, action="join"):
         return membership
 
 
+def create_team_for_player(actor, player, team_name):
+    if not getattr(actor, "is_authenticated", False):
+        raise AuthorizationFailure("Authentication is required.")
+    if not actor.is_staff and getattr(player, "user_id", None) != actor.id:
+        raise AuthorizationFailure("Players may only create a team for themselves.")
+
+    normalized_name = " ".join((team_name or "").split())
+    if not normalized_name:
+        raise InvalidInput("Team name is required.")
+    if len(normalized_name) > Team._meta.get_field("name").max_length:
+        raise InvalidInput("Team name is too long.")
+
+    if player.gender == PlayerProfile.GENDER_MALE:
+        division = Team.DIVISION_MENS
+    elif player.gender == PlayerProfile.GENDER_FEMALE:
+        division = Team.DIVISION_WOMENS
+    else:
+        raise InvalidInput("Player profile must have a valid division.")
+
+    with transaction.atomic():
+        locked_player = PlayerProfile.objects.select_for_update().get(pk=player.pk)
+        current_active = (
+            TeamMembership.objects.select_for_update().filter(player=locked_player, status=TeamMembership.STATUS_ACTIVE).first()
+        )
+        if current_active:
+            raise InvalidInput("Player already has an active team membership.")
+        if Team.objects.select_for_update().filter(name__iexact=normalized_name).exists():
+            raise InvalidInput("A team with this name already exists.")
+
+        try:
+            with transaction.atomic():
+                team = Team.objects.create(name=normalized_name, division=division)
+        except IntegrityError as exc:
+            raise InvalidInput("A team with this name already exists.") from exc
+        membership = request_membership_change(actor, locked_player, team, "join")
+        _get_or_create_standing(team)
+        recalculate_ladder_positions(division)
+        return team, membership
+
+
 def resolve_membership_request(admin_actor, membership, decision):
     if not getattr(admin_actor, "is_staff", False):
         raise AuthorizationFailure("Only administrators may resolve membership requests.")

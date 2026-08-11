@@ -8,7 +8,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamJoinForm
+from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamCreateForm, TeamJoinForm
 from .models import (
     AvailabilitySlot,
     LadderStanding,
@@ -23,6 +23,7 @@ from .services import (
     accept_suggestion,
     cancel_availability,
     create_match_suggestion,
+    create_team_for_player,
     find_opponent_suggestions,
     get_match_status,
     request_membership_change,
@@ -138,8 +139,34 @@ def team_detail(request):
     return render(
         request,
         "ladder/team.html",
-        {"profile": profile, "team": team, "members": members, "membership": membership, "join_form": TeamJoinForm(profile=profile)},
+        {
+            "profile": profile,
+            "team": team,
+            "members": members,
+            "membership": membership,
+            "join_form": TeamJoinForm(profile=profile),
+            "create_form": TeamCreateForm(),
+        },
     )
+
+
+@login_required
+def create_team(request):
+    if request.method != "POST":
+        return redirect("ladder:team")
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    form = TeamCreateForm(request.POST)
+    if form.is_valid():
+        try:
+            team, _membership = create_team_for_player(request.user, profile, form.cleaned_data["name"])
+            messages.success(request, f"Team {team.name} created.")
+        except DomainError as error:
+            _message_domain_error(request, error)
+    else:
+        messages.error(request, "Enter a valid, unique team name.")
+    return redirect("ladder:team")
 
 
 @login_required

@@ -37,16 +37,17 @@ from .services import (
     StaleState,
     accept_suggestion,
     cancel_match,
+    create_admin_notification_for_conflict,
     create_match_suggestion,
-    find_team_match_options,
+    create_team_for_player,
     find_opponent_suggestions,
+    find_team_match_options,
     finalize_match_result,
     generate_team_lineups,
     get_pair_matching_slots,
     get_player_pairs,
     get_team_pair_availability,
     get_match_status,
-    create_admin_notification_for_conflict,
     complete_match_if_result_confirmed,
     get_match_winner_and_loser,
     recalculate_ladder_positions,
@@ -938,6 +939,37 @@ class RemediationServiceTests(TestCase):
 
         self.assertEqual(TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count(), 3)
 
+    def test_create_team_for_player_derives_division_membership_and_standing(self):
+        male = self.create_profile("create-mens", gender=PlayerProfile.GENDER_MALE)
+        female = self.create_profile("create-womens", gender=PlayerProfile.GENDER_FEMALE)
+
+        mens_team, mens_membership = create_team_for_player(male.user, male, "  Black Label  ")
+        womens_team, womens_membership = create_team_for_player(female.user, female, "Red Room")
+
+        male.refresh_from_db()
+        female.refresh_from_db()
+        self.assertEqual(mens_team.name, "Black Label")
+        self.assertEqual(mens_team.division, Team.DIVISION_MENS)
+        self.assertEqual(womens_team.division, Team.DIVISION_WOMENS)
+        self.assertEqual(mens_membership.status, TeamMembership.STATUS_ACTIVE)
+        self.assertEqual(womens_membership.status, TeamMembership.STATUS_ACTIVE)
+        self.assertEqual(male.team, mens_team)
+        self.assertEqual(female.team, womens_team)
+        self.assertTrue(LadderStanding.objects.filter(team=mens_team).exists())
+        self.assertTrue(LadderStanding.objects.filter(team=womens_team).exists())
+
+    def test_create_team_for_player_rejects_existing_membership_and_duplicate_name(self):
+        team, players = self.create_team_with_members("existing-membership", 1)
+
+        with self.assertRaises(InvalidInput):
+            create_team_for_player(players[0].user, players[0], "New Team")
+
+        free_player = self.create_profile("duplicate-team-player")
+        with self.assertRaises(InvalidInput):
+            create_team_for_player(free_player.user, free_player, team.name.lower())
+
+        self.assertFalse(Team.objects.filter(name="New Team").exists())
+
     def test_admin_resolves_removal_request_without_deleting_history(self):
         team, players = self.create_team_with_members("remove", 1)
         membership = request_membership_change(players[0].user, players[0], action="request_removal")
@@ -1249,6 +1281,63 @@ class PhaseARequestTests(TestCase):
         self.assertEqual(post_response.status_code, 302)
         self.assertEqual(profile.team, mens_team)
         self.assertTrue(TeamMembership.objects.filter(player=profile, team=mens_team).exists())
+
+    def test_team_create_is_post_only_and_adds_creator_as_first_member(self):
+        profile = self.create_profile("team-creator")
+        self.client.force_login(profile.user)
+
+        get_response = self.client.get(reverse("ladder:create_team"))
+        post_response = self.client.post(reverse("ladder:create_team"), {"name": "  Creator Club  "})
+
+        profile.refresh_from_db()
+        team = Team.objects.get(name="Creator Club")
+        self.assertEqual(get_response.status_code, 302)
+        self.assertEqual(post_response.status_code, 302)
+        self.assertEqual(team.division, Team.DIVISION_MENS)
+        self.assertEqual(profile.team, team)
+        self.assertTrue(TeamMembership.objects.filter(player=profile, team=team, status=TeamMembership.STATUS_ACTIVE).exists())
+        self.assertTrue(LadderStanding.objects.filter(team=team).exists())
+
+    def test_womens_player_created_team_uses_womens_division(self):
+        profile = self.create_profile("womens-team-creator", gender=PlayerProfile.GENDER_FEMALE)
+        self.client.force_login(profile.user)
+
+        response = self.client.post(reverse("ladder:create_team"), {"name": "Womens Creator Club"})
+
+        team = Team.objects.get(name="Womens Creator Club")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(team.division, Team.DIVISION_WOMENS)
+
+    def test_team_create_requires_profile_and_no_active_team(self):
+        user = get_user_model().objects.create_user(username="create-needs-profile", password="pass")
+        self.client.force_login(user)
+
+        no_profile_response = self.client.post(reverse("ladder:create_team"), {"name": "No Profile Team"})
+
+        profile = self.create_profile("already-on-team")
+        team = Team.objects.create(name="Already Team", division=Team.DIVISION_MENS)
+        request_membership_change(profile.user, profile, team, "join")
+        self.client.force_login(profile.user)
+        existing_team_response = self.client.post(reverse("ladder:create_team"), {"name": "Should Not Exist"})
+
+        self.assertEqual(no_profile_response.status_code, 302)
+        self.assertIn(reverse("ladder:profile_setup"), no_profile_response["Location"])
+        self.assertEqual(existing_team_response.status_code, 302)
+        self.assertFalse(Team.objects.filter(name="No Profile Team").exists())
+        self.assertFalse(Team.objects.filter(name="Should Not Exist").exists())
+
+    def test_team_create_rejects_duplicate_or_blank_name_cleanly(self):
+        profile = self.create_profile("duplicate-request-player")
+        Team.objects.create(name="Existing Team", division=Team.DIVISION_MENS)
+        self.client.force_login(profile.user)
+
+        duplicate_response = self.client.post(reverse("ladder:create_team"), {"name": "existing team"})
+        blank_response = self.client.post(reverse("ladder:create_team"), {"name": "   "})
+
+        self.assertEqual(duplicate_response.status_code, 302)
+        self.assertEqual(blank_response.status_code, 302)
+        self.assertIsNone(PlayerProfile.objects.get(pk=profile.pk).team)
+        self.assertEqual(Team.objects.filter(name__iexact="existing team").count(), 1)
 
     def test_availability_create_and_cancel_are_owner_scoped(self):
         team, players = self.create_team_with_members("availability-page", 1)

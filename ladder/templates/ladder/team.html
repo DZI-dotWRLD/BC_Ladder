@@ -37,6 +37,16 @@
                 <button type="submit">Join team</button>
             </form>
         </section>
+        <section class="panel">
+            <div class="eyebrow">New team</div>
+            <h2>Create Team</h2>
+            <p class="muted">Create a team in your own ladder. You will become the first active member.</p>
+            <form method="post" action="{% url 'ladder:create_team' %}">
+                {% csrf_token %}
+                {{ create_form.as_p }}
+                <button type="submit">Create team</button>
+            </form>
+        </section>
     {% endif %}
 </div>
 {% endblock %}

@@ -37,6 +37,22 @@ class TeamJoinForm(forms.Form):
         self.fields["team"].queryset = queryset
 
 
+class TeamCreateForm(forms.Form):
+    name = forms.CharField(
+        label="Team name",
+        max_length=50,
+        widget=forms.TextInput(attrs={"placeholder": "e.g. The Red Room"}),
+    )
+
+    def clean_name(self):
+        name = " ".join(self.cleaned_data["name"].split())
+        if not name:
+            raise forms.ValidationError("Team name is required.")
+        if Team.objects.filter(name__iexact=name).exists():
+            raise forms.ValidationError("A team with this name already exists.")
+        return name
+
+
 class ProfileSetupForm(forms.ModelForm):
     class Meta:
         model = PlayerProfile
