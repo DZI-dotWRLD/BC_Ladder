@@ -159,6 +159,47 @@ p { margin: 0 0 12px; }
     padding: 16px;
 }
 
+.setup-panel { margin-bottom: 16px; }
+
+.setup-list {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0 0;
+    display: grid;
+    gap: 10px;
+}
+
+.setup-list li {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid var(--line);
+    background: var(--ivory);
+    padding: 12px;
+}
+
+.setup-list li.complete {
+    background: #fff;
+    border-left: 4px solid var(--accent);
+}
+
+.setup-list strong,
+.setup-list .muted {
+    display: block;
+}
+
+.setup-marker {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    color: #fff;
+    background: var(--black);
+    border-radius: 999px;
+    font: 700 .85rem system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
 .messages { margin-bottom: 18px; }
 
 .message {

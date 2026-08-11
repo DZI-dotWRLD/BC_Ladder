@@ -72,6 +72,59 @@ def _player_match_queryset(profile):
     )
 
 
+def _setup_steps_for_profile(profile, team, active_availability_count, suggestion_count, match_count):
+    pending_join_request = (
+        None
+        if team
+        else TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_JOIN_REQUESTED)
+        .select_related("team")
+        .order_by("created_at", "id")
+        .first()
+    )
+    team_label = "Team selected"
+    team_detail_text = team.name if team else "Create a team or request to join one."
+    if pending_join_request:
+        team_label = "Team request pending"
+        team_detail_text = f"Waiting for admin approval to join {pending_join_request.team.name}."
+
+    return [
+        {
+            "label": "Player profile",
+            "detail": "Profile complete.",
+            "complete": True,
+            "url_name": "ladder:profile_setup",
+        },
+        {
+            "label": team_label,
+            "detail": team_detail_text,
+            "complete": bool(team),
+            "url_name": "ladder:team",
+        },
+        {
+            "label": "Availability",
+            "detail": "Add at least one active window."
+            if not active_availability_count
+            else f"{active_availability_count} active window(s).",
+            "complete": active_availability_count > 0,
+            "url_name": "ladder:availability",
+        },
+        {
+            "label": "Suggestions",
+            "detail": "Review compatible opponents once your team has shared availability."
+            if not suggestion_count
+            else f"{suggestion_count} suggestion(s) available.",
+            "complete": suggestion_count > 0,
+            "url_name": "ladder:suggestions",
+        },
+        {
+            "label": "Matches",
+            "detail": "Confirmed matches will appear here." if not match_count else f"{match_count} match(es) scheduled or completed.",
+            "complete": match_count > 0,
+            "url_name": "ladder:matches",
+        },
+    ]
+
+
 def register(request):
     if request.user.is_authenticated:
         return redirect("ladder:dashboard")
@@ -106,9 +159,11 @@ def dashboard(request):
     if profile is None:
         return redirect("ladder:profile_setup")
     team = _active_team(profile)
-    availability = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE).order_by("starts_at")[:5]
+    active_availability = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE)
+    availability = active_availability.order_by("starts_at")[:5]
     suggestions_qs = MatchSuggestion.objects.none()
-    matches = _player_match_queryset(profile)[:5]
+    matches_qs = _player_match_queryset(profile)
+    matches = matches_qs[:5]
     if team:
         suggestions_qs = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
@@ -116,10 +171,24 @@ def dashboard(request):
             .prefetch_related("participants__player__user", "acceptances")
             .order_by("starts_at")[:5]
         )
+    setup_steps = _setup_steps_for_profile(
+        profile,
+        team,
+        active_availability.count(),
+        suggestions_qs.count(),
+        matches_qs.count(),
+    )
     return render(
         request,
         "ladder/dashboard.html",
-        {"profile": profile, "team": team, "availability": availability, "suggestions": suggestions_qs, "matches": matches},
+        {
+            "profile": profile,
+            "team": team,
+            "availability": availability,
+            "suggestions": suggestions_qs,
+            "matches": matches,
+            "setup_steps": setup_steps,
+        },
     )
 
 
@@ -228,8 +297,9 @@ def availability(request):
                 _message_domain_error(request, error)
         else:
             messages.error(request, "Enter a valid start and end.")
-    slots = profile.availability_slots.order_by("-starts_at", "-created_at")
-    return render(request, "ladder/availability.html", {"form": form, "slots": slots})
+    slots = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE).order_by("starts_at", "created_at")
+    cancelled_count = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_CANCELLED).count()
+    return render(request, "ladder/availability.html", {"form": form, "slots": slots, "cancelled_count": cancelled_count})
 
 
 @login_required

@@ -36,6 +36,7 @@ from .services import (
     InvalidInput,
     StaleState,
     accept_suggestion,
+    cancel_availability,
     cancel_match,
     create_admin_notification_for_conflict,
     create_match_suggestion,
@@ -1313,7 +1314,21 @@ class PhaseARequestTests(TestCase):
         response = self.client.get(reverse("ladder:dashboard"))
 
         self.assertContains(response, "Dashboard")
+        self.assertContains(response, "Manual setup")
+        self.assertContains(response, "Start here")
         self.assertContains(response, team.name)
+
+    def test_dashboard_setup_checklist_shows_pending_join_request(self):
+        profile = self.create_profile("dashboard-pending")
+        team = Team.objects.create(name="Dashboard Pending Team", division=Team.DIVISION_MENS)
+        request_membership_change(profile.user, profile, team, "request_join")
+        self.client.force_login(profile.user)
+
+        response = self.client.get(reverse("ladder:dashboard"))
+
+        self.assertContains(response, "Team request pending")
+        self.assertContains(response, "Dashboard Pending Team")
+        self.assertContains(response, "Add at least one active window.")
 
     def test_team_join_is_post_only_scoped_to_player_division_and_pending(self):
         profile = self.create_profile("joiner")
@@ -1449,6 +1464,20 @@ class PhaseARequestTests(TestCase):
         self.assertEqual(slot.status, AvailabilitySlot.STATUS_CANCELLED)
         self.assertEqual(blocked_response.status_code, 302)
         self.assertEqual(other_slot.status, AvailabilitySlot.STATUS_ACTIVE)
+
+    def test_cancelled_availability_is_hidden_from_player_window_list(self):
+        _team, players = self.create_team_with_members("availability-hidden", 1)
+        self.client.force_login(players[0].user)
+        cancelled_slot = save_availability(players[0].user, self.make_dt(2026, 7, 29, 18), self.make_dt(2026, 7, 29, 20))
+        active_slot = save_availability(players[0].user, self.make_dt(2026, 7, 30, 18), self.make_dt(2026, 7, 30, 20))
+        cancel_availability(players[0].user, cancelled_slot)
+
+        response = self.client.get(reverse("ladder:availability"))
+
+        self.assertContains(response, "Active Windows")
+        self.assertContains(response, "1 cancelled window")
+        self.assertContains(response, active_slot.starts_at.strftime("%Y"))
+        self.assertNotContains(response, "Jul 29, 2026")
 
     def test_suggestion_create_and_dual_acceptance_flow(self):
         team_a, team_a_players = self.create_team_with_members("phase-a", 2)
