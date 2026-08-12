@@ -153,6 +153,15 @@ p { margin: 0 0 12px; }
     text-transform: uppercase;
 }
 
+.member-list {
+    border: 1px solid var(--line);
+    background: var(--ivory);
+    padding: 10px 12px;
+    margin-bottom: 12px;
+}
+
+.member-list p:last-child { margin-bottom: 0; }
+
 .empty-state {
     border: 1px dashed var(--line);
     background: var(--ivory);

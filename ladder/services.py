@@ -326,6 +326,32 @@ def create_team_for_player(actor, player, team_name):
         return team, membership
 
 
+def cancel_join_request(actor, player):
+    if not getattr(actor, "is_authenticated", False):
+        raise AuthorizationFailure("Authentication is required.")
+    if not actor.is_staff and getattr(player, "user_id", None) != actor.id:
+        raise AuthorizationFailure("Players may only cancel their own join requests.")
+
+    with transaction.atomic():
+        locked_player = PlayerProfile.objects.select_for_update().get(pk=player.pk)
+        pending_request = (
+            TeamMembership.objects.select_for_update()
+            .filter(player=locked_player, status=TeamMembership.STATUS_JOIN_REQUESTED)
+            .order_by("created_at", "id")
+            .first()
+        )
+        if not pending_request:
+            raise InvalidInput("Player does not have a pending team join request.")
+
+        now = timezone.now()
+        pending_request.status = TeamMembership.STATUS_INACTIVE
+        pending_request.effective_to = now
+        pending_request.resolved_at = now
+        pending_request.resolution_note = "Cancelled by player."
+        pending_request.save(update_fields=["status", "effective_to", "resolved_at", "resolution_note", "updated_at"])
+        return pending_request
+
+
 def resolve_membership_request(admin_actor, membership, decision):
     if not getattr(admin_actor, "is_staff", False):
         raise AuthorizationFailure("Only administrators may resolve membership requests.")

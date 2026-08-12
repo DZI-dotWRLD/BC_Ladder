@@ -14,6 +14,7 @@ urlpatterns = [
     path("team/", views.team_detail, name="team"),
     path("team/create/", views.create_team, name="create_team"),
     path("team/join/", views.join_team, name="join_team"),
+    path("team/join/cancel/", views.cancel_join_request_view, name="cancel_join_request"),
     path("team/request-removal/", views.request_team_removal, name="request_team_removal"),
     path("availability/", views.availability, name="availability"),
     path("availability/<int:slot_id>/cancel/", views.cancel_availability_view, name="cancel_availability"),

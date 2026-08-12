@@ -37,6 +37,7 @@ from .services import (
     StaleState,
     accept_suggestion,
     cancel_availability,
+    cancel_join_request,
     cancel_match,
     create_admin_notification_for_conflict,
     create_match_suggestion,
@@ -1031,6 +1032,24 @@ class RemediationServiceTests(TestCase):
         self.assertEqual(rejected.status, TeamMembership.STATUS_INACTIVE)
         self.assertIsNone(player.team)
 
+    def test_player_can_cancel_own_join_request_only(self):
+        team = Team.objects.create(name="join-cancel-team", division=Team.DIVISION_MENS)
+        player = self.create_profile("join-cancel-player")
+        other = self.create_profile("join-cancel-other")
+        request = request_membership_change(player.user, player, team, "request_join")
+
+        with self.assertRaises(AuthorizationFailure):
+            cancel_join_request(other.user, player)
+
+        cancelled = cancel_join_request(player.user, player)
+
+        request.refresh_from_db()
+        player.refresh_from_db()
+        self.assertEqual(cancelled.pk, request.pk)
+        self.assertEqual(request.status, TeamMembership.STATUS_INACTIVE)
+        self.assertEqual(request.resolution_note, "Cancelled by player.")
+        self.assertIsNone(player.team)
+
     def test_save_availability_is_idempotent_and_rejects_overlap(self):
         team, players = self.create_team_with_members("availability", 1)
         starts_at = self.make_dt(2026, 7, 6, 18)
@@ -1364,6 +1383,32 @@ class PhaseARequestTests(TestCase):
         self.assertContains(page_response, "pending admin review")
         self.assertEqual(post_response.status_code, 302)
         self.assertFalse(TeamMembership.objects.filter(player=profile, team=other_team).exists())
+
+    def test_pending_join_request_can_be_cancelled_by_player_post_only(self):
+        profile = self.create_profile("pending-cancel")
+        requested_team = Team.objects.create(name="Cancel Requested Team", division=Team.DIVISION_MENS)
+        request = request_membership_change(profile.user, profile, requested_team, "request_join")
+        self.client.force_login(profile.user)
+
+        get_response = self.client.get(reverse("ladder:cancel_join_request"))
+        post_response = self.client.post(reverse("ladder:cancel_join_request"))
+
+        request.refresh_from_db()
+        profile.refresh_from_db()
+        self.assertEqual(get_response.status_code, 302)
+        self.assertEqual(post_response.status_code, 302)
+        self.assertEqual(request.status, TeamMembership.STATUS_INACTIVE)
+        self.assertEqual(request.resolution_note, "Cancelled by player.")
+        self.assertIsNone(profile.team)
+
+    def test_team_page_shows_capacity_and_full_state(self):
+        team, players = self.create_team_with_members("capacity-page", 3)
+        self.client.force_login(players[0].user)
+
+        response = self.client.get(reverse("ladder:team"))
+
+        self.assertContains(response, "3/3 members")
+        self.assertContains(response, "This team is full")
 
     def test_team_join_rejects_wrong_division_and_existing_active_team(self):
         womens_profile = self.create_profile("wrong-division", gender=PlayerProfile.GENDER_FEMALE)

@@ -42,11 +42,27 @@ class PlayerProfileAdmin(admin.ModelAdmin):
 
 
 class TeamMembershipAdmin(admin.ModelAdmin):
-    list_display = ("player", "team", "status", "removal_requested_at", "reviewed_by", "resolved_at")
+    list_display = (
+        "player",
+        "team",
+        "status",
+        "is_pending_join_request",
+        "is_pending_removal_request",
+        "reviewed_by",
+        "resolved_at",
+    )
     list_filter = ("status", "team__division", "removal_requested_at")
     list_select_related = ("player__user", "team", "reviewed_by")
     readonly_fields = ("created_at", "updated_at", "effective_from", "effective_to", "reviewed_by", "resolved_at")
     actions = ("approve_join_requests", "reject_join_requests", "approve_removal_requests", "reject_removal_requests")
+
+    @admin.display(boolean=True, description="Join pending")
+    def is_pending_join_request(self, obj):
+        return obj.status == TeamMembership.STATUS_JOIN_REQUESTED
+
+    @admin.display(boolean=True, description="Removal pending")
+    def is_pending_removal_request(self, obj):
+        return obj.removal_requested_at is not None and obj.status == TeamMembership.STATUS_ACTIVE
 
     @admin.action(description="Approve selected join requests")
     def approve_join_requests(self, request, queryset):

@@ -22,6 +22,7 @@ from .services import (
     DomainError,
     accept_suggestion,
     cancel_availability,
+    cancel_join_request,
     create_match_suggestion,
     create_team_for_player,
     find_opponent_suggestions,
@@ -200,12 +201,17 @@ def team_detail(request):
     membership = _active_membership(profile)
     team = membership.team if membership else profile.team
     members = []
+    member_count = 0
+    team_capacity = 3
+    team_is_full = False
     pending_join_request = None
     if team:
         member_ids = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).values_list("player_id", flat=True)
         members = (
             PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
         )
+        member_count = len(members)
+        team_is_full = member_count >= team_capacity
     else:
         pending_join_request = (
             TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_JOIN_REQUESTED)
@@ -220,6 +226,9 @@ def team_detail(request):
             "profile": profile,
             "team": team,
             "members": members,
+            "member_count": member_count,
+            "team_capacity": team_capacity,
+            "team_is_full": team_is_full,
             "membership": membership,
             "pending_join_request": pending_join_request,
             "join_form": TeamJoinForm(profile=profile),
@@ -263,6 +272,21 @@ def join_team(request):
             _message_domain_error(request, error)
     else:
         messages.error(request, "Choose a valid team.")
+    return redirect("ladder:team")
+
+
+@login_required
+def cancel_join_request_view(request):
+    if request.method != "POST":
+        return redirect("ladder:team")
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    try:
+        cancel_join_request(request.user, profile)
+        messages.success(request, "Team join request cancelled.")
+    except DomainError as error:
+        _message_domain_error(request, error)
     return redirect("ladder:team")
 
 
