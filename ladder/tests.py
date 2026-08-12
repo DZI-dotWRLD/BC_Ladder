@@ -1551,6 +1551,79 @@ class PhaseARequestTests(TestCase):
         self.assertEqual(Match.objects.count(), 1)
         self.assertEqual(MatchReservation.objects.count(), 4)
 
+    def test_suggestions_explain_missing_team_and_missing_members(self):
+        no_team_profile = self.create_profile("suggestions-no-team")
+        self.client.force_login(no_team_profile.user)
+
+        no_team_response = self.client.get(reverse("ladder:suggestions"))
+
+        one_member_team, one_member_players = self.create_team_with_members("suggestions-one-member", 1)
+        self.client.force_login(one_member_players[0].user)
+        one_member_response = self.client.get(reverse("ladder:suggestions"))
+
+        self.assertContains(no_team_response, "Join or create a team first")
+        self.assertContains(no_team_response, "Suggestions require an active team")
+        self.assertContains(one_member_response, "Your team needs two active members")
+        self.assertContains(one_member_response, one_member_team.name)
+
+    def test_suggestions_explain_missing_availability_and_missing_shared_lineup(self):
+        _team_without_availability, no_availability_players = self.create_team_with_members("suggestions-no-availability", 2)
+        self.client.force_login(no_availability_players[0].user)
+
+        no_availability_response = self.client.get(reverse("ladder:suggestions"))
+
+        no_shared_team, no_shared_players = self.create_team_with_members("suggestions-no-shared", 2)
+        save_availability(no_shared_players[0].user, self.make_dt(2026, 8, 17, 18), self.make_dt(2026, 8, 17, 20))
+        save_availability(no_shared_players[1].user, self.make_dt(2026, 8, 18, 18), self.make_dt(2026, 8, 18, 20))
+        self.client.force_login(no_shared_players[0].user)
+        no_shared_response = self.client.get(reverse("ladder:suggestions"))
+
+        self.assertContains(no_availability_response, "Add active availability")
+        self.assertContains(no_availability_response, "At least two teammates need overlapping")
+        self.assertContains(no_shared_response, "No shared team availability")
+        self.assertContains(no_shared_response, no_shared_team.name)
+
+    def test_suggestions_explain_missing_opponents_and_render_valid_option_details(self):
+        solo_team, solo_players = self.create_team_with_members("suggestions-solo", 2)
+        starts_at = self.make_dt(2026, 8, 19, 18)
+        ends_at = self.make_dt(2026, 8, 19, 20)
+        for player in solo_players:
+            save_availability(player.user, starts_at, ends_at)
+        self.client.force_login(solo_players[0].user)
+
+        no_opponents_response = self.client.get(reverse("ladder:suggestions"))
+
+        opponent_team, opponent_players = self.create_team_with_members("suggestions-opponent", 2)
+        for player in opponent_players:
+            save_availability(player.user, starts_at, ends_at)
+        valid_response = self.client.get(reverse("ladder:suggestions"))
+
+        self.assertContains(no_opponents_response, "No opponent teams in this ladder yet")
+        self.assertContains(valid_response, solo_team.name)
+        self.assertContains(valid_response, opponent_team.name)
+        self.assertContains(valid_response, "Your lineup")
+        self.assertContains(valid_response, "Opponent lineup")
+        self.assertContains(valid_response, "Create suggestion")
+
+    def test_current_suggestion_accept_button_only_shows_for_selected_lineup_players(self):
+        team_a, team_a_players = self.create_team_with_members("suggestions-selected-a", 3)
+        _team_b, team_b_players = self.create_team_with_members("suggestions-selected-b", 2)
+        starts_at = self.make_dt(2026, 8, 20, 18)
+        ends_at = self.make_dt(2026, 8, 20, 20)
+        for player in team_a_players[:2] + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option)
+
+        self.client.force_login(team_a_players[2].user)
+        third_member_response = self.client.get(reverse("ladder:suggestions"))
+        self.client.force_login(team_a_players[0].user)
+        selected_player_response = self.client.get(reverse("ladder:suggestions"))
+
+        self.assertContains(third_member_response, "Only the selected lineup players can accept this suggestion.")
+        self.assertNotContains(third_member_response, f'action="{reverse("ladder:accept_suggestion", args=[suggestion.id])}"')
+        self.assertContains(selected_player_response, f'action="{reverse("ladder:accept_suggestion", args=[suggestion.id])}"')
+
     def test_match_detail_blocks_unrelated_player_and_score_submission_updates_result(self):
         team_a, team_a_players = self.create_team_with_members("score-page-a", 2)
         team_b, team_b_players = self.create_team_with_members("score-page-b", 2)

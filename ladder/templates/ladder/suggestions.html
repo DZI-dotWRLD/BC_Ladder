@@ -6,8 +6,9 @@
 <h1>Suggestions</h1>
 {% if not team %}
     <section class="panel empty-state">
-        <p class="muted">Join a team before reviewing suggestions.</p>
-        <a class="button secondary" href="{% url 'ladder:team' %}">Go to team</a>
+        <h2>{{ empty_state.title }}</h2>
+        <p class="muted">{{ empty_state.detail }}</p>
+        <a class="button secondary" href="{% url empty_state.url_name %}">{{ empty_state.action }}</a>
     </section>
 {% else %}
     <div class="grid">
@@ -15,33 +16,48 @@
             <h2>Available Options</h2>
             {% for option in options %}
                 <div class="item">
-                    <p>{{ option.team_a.name }} vs {{ option.team_b.name }}</p>
+                    <p><strong>{{ option.team_a.name }} vs {{ option.team_b.name }}</strong></p>
                     <p class="muted">{{ option.starts_at|date:"M j, Y g:i A" }} to {{ option.ends_at|date:"g:i A" }}</p>
-                    <p>{{ option.team_a_players.0.user.username }} / {{ option.team_a_players.1.user.username }} vs {{ option.team_b_players.0.user.username }} / {{ option.team_b_players.1.user.username }}</p>
+                    <p><span class="status-pill">Your lineup</span> {{ option.team_a_players.0.user.username }} / {{ option.team_a_players.1.user.username }}</p>
+                    <p><span class="status-pill">Opponent lineup</span> {{ option.team_b_players.0.user.username }} / {{ option.team_b_players.1.user.username }}</p>
                     <form method="post" action="{% url 'ladder:create_suggestion' forloop.counter0 %}">
                         {% csrf_token %}
                         <button type="submit">Create suggestion</button>
                     </form>
                 </div>
             {% empty %}
-                <p class="muted">No compatible options in the next 30 days.</p>
-                <a class="button secondary" href="{% url 'ladder:availability' %}">Add availability</a>
+                <div class="empty-state">
+                    <h3>{{ empty_state.title }}</h3>
+                    <p class="muted">{{ empty_state.detail }}</p>
+                    {% if empty_state.url_args %}
+                        <a class="button secondary" href="{% url empty_state.url_name empty_state.url_args.0 %}">{{ empty_state.action }}</a>
+                    {% else %}
+                        <a class="button secondary" href="{% url empty_state.url_name %}">{{ empty_state.action }}</a>
+                    {% endif %}
+                </div>
             {% endfor %}
         </section>
         <section class="panel">
             <h2>Current Suggestions</h2>
-            {% for suggestion in existing %}
+            {% for card in existing_cards %}
                 <div class="item">
+                    {% with suggestion=card.suggestion %}
                     <p>{{ suggestion.team_a.name }} vs {{ suggestion.team_b.name }}</p>
-                    <p class="muted">{{ suggestion.starts_at|date:"M j, Y g:i A" }}</p>
+                    <p class="muted">{{ suggestion.starts_at|date:"M j, Y g:i A" }} to {{ suggestion.ends_at|date:"g:i A" }}</p>
+                    <p><span class="status-pill">Team A</span> {{ card.team_a_lineup }}</p>
+                    <p><span class="status-pill">Team B</span> {{ card.team_b_lineup }}</p>
                     <p><span class="status-pill">{{ suggestion.get_status_display }}</span></p>
-                    {% if suggestion.status == "proposed" or suggestion.status == "partially_accepted" %}
+                    <p class="muted">{{ card.state_note }}</p>
+                    {% if card.can_accept %}
                         <form method="post" action="{% url 'ladder:accept_suggestion' suggestion.id %}">
                             {% csrf_token %}
                             <input type="hidden" name="version" value="{{ suggestion.version }}">
                             <button type="submit">Accept</button>
                         </form>
+                    {% elif card.is_open and not card.is_selected_player %}
+                        <p class="muted">Only the selected lineup players can accept this suggestion.</p>
                     {% endif %}
+                    {% endwith %}
                 </div>
             {% empty %}
                 <p class="muted">No suggestions have been created.</p>

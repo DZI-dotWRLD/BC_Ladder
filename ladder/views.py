@@ -15,6 +15,7 @@ from .models import (
     Match,
     MatchSuggestion,
     PlayerProfile,
+    SuggestionParticipant,
     Team,
     TeamMembership,
 )
@@ -26,6 +27,7 @@ from .services import (
     create_match_suggestion,
     create_team_for_player,
     find_opponent_suggestions,
+    generate_team_lineups,
     get_match_status,
     request_membership_change,
     save_availability,
@@ -124,6 +126,120 @@ def _setup_steps_for_profile(profile, team, active_availability_count, suggestio
             "url_name": "ladder:matches",
         },
     ]
+
+
+def _active_member_count(team):
+    membership_count = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count()
+    legacy_count = team.players.count()
+    return max(membership_count, legacy_count)
+
+
+def _suggestion_empty_state(profile, team, interval, options):
+    if not team:
+        return {
+            "title": "Join or create a team first",
+            "detail": "Suggestions require an active team in your ladder.",
+            "url_name": "ladder:team",
+            "action": "Go to team",
+        }
+
+    if _active_member_count(team) < 2:
+        return {
+            "title": "Your team needs two active members",
+            "detail": "A doubles match needs exactly two active players from your team.",
+            "url_name": "ladder:team",
+            "action": "Manage team",
+        }
+
+    if not AvailabilitySlot.objects.filter(
+        player__team_memberships__team=team,
+        player__team_memberships__status=TeamMembership.STATUS_ACTIVE,
+        status=AvailabilitySlot.STATUS_ACTIVE,
+        starts_at__lt=interval[1],
+        ends_at__gt=interval[0],
+    ).exists():
+        return {
+            "title": "Add active availability",
+            "detail": "At least two teammates need overlapping active availability before opponents can be suggested.",
+            "url_name": "ladder:availability",
+            "action": "Add availability",
+        }
+
+    if not generate_team_lineups(team, interval):
+        return {
+            "title": "No shared team availability",
+            "detail": "Your team has availability, but no two active members currently overlap in the next 30 days.",
+            "url_name": "ladder:availability",
+            "action": "Adjust availability",
+        }
+
+    if not Team.active.filter(division=team.division).exclude(pk=team.pk).exists():
+        return {
+            "title": "No opponent teams in this ladder yet",
+            "detail": "Suggestions require another active team in the same ladder.",
+            "url_name": "ladder:ladder",
+            "url_args": [team.division],
+            "action": "View ladder",
+        }
+
+    if not options:
+        return {
+            "title": "No overlapping opponent availability",
+            "detail": "Your team is ready, but no eligible opponent lineup has a compatible active window right now.",
+            "url_name": "ladder:availability",
+            "action": "Review availability",
+        }
+    return None
+
+
+def _lineup_label(players):
+    return " / ".join(player.user.username for player in players)
+
+
+def _suggestion_cards(suggestions, profile, team):
+    cards = []
+    open_statuses = {MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED}
+    for suggestion in suggestions:
+        participants = list(suggestion.participants.all())
+        players_by_side = {
+            SuggestionParticipant.SIDE_A: [],
+            SuggestionParticipant.SIDE_B: [],
+        }
+        for participant in sorted(participants, key=lambda item: (item.side, item.lineup_order, item.player_id)):
+            players_by_side[participant.side].append(participant.player)
+
+        accepted_team_ids = {acceptance.team_id for acceptance in suggestion.acceptances.all()}
+        own_team_accepted = team.id in accepted_team_ids
+        required_team_ids = {suggestion.team_a_id, suggestion.team_b_id}
+        is_selected_player = profile.id in {participant.player_id for participant in participants}
+        is_open = suggestion.status in open_statuses
+        can_accept = is_open and is_selected_player and not own_team_accepted
+
+        if suggestion.status == MatchSuggestion.STATUS_CONFIRMED:
+            state_note = "Match confirmed."
+        elif suggestion.status in {MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED, MatchSuggestion.STATUS_EXPIRED}:
+            state_note = f"This suggestion is {suggestion.get_status_display().lower()}."
+        elif accepted_team_ids == required_team_ids:
+            state_note = "Both teams accepted; confirmation is in progress."
+        elif own_team_accepted:
+            state_note = "Your team accepted. Waiting for the opponent."
+        elif accepted_team_ids:
+            state_note = "Opponent accepted. Your selected lineup can accept."
+        else:
+            state_note = "Waiting for both teams to accept."
+
+        cards.append(
+            {
+                "suggestion": suggestion,
+                "team_a_lineup": _lineup_label(players_by_side[SuggestionParticipant.SIDE_A]),
+                "team_b_lineup": _lineup_label(players_by_side[SuggestionParticipant.SIDE_B]),
+                "can_accept": can_accept,
+                "is_open": is_open,
+                "state_note": state_note,
+                "is_selected_player": is_selected_player,
+            }
+        )
+    return cards
 
 
 def register(request):
@@ -350,17 +466,26 @@ def suggestions(request):
     team = _active_team(profile)
     options = []
     existing = MatchSuggestion.objects.none()
+    existing_cards = []
+    empty_state = None
+    starts_at = timezone.now()
+    ends_at = starts_at + timedelta(days=30)
+    interval = (starts_at, ends_at)
     if team:
-        starts_at = timezone.now()
-        ends_at = starts_at + timedelta(days=30)
-        options = find_opponent_suggestions(team, (starts_at, ends_at))[:10]
+        options = find_opponent_suggestions(team, interval)[:10]
         existing = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
             .select_related("team_a", "team_b")
             .prefetch_related("participants__player__user", "acceptances")
             .order_by("starts_at", "id")
         )
-    return render(request, "ladder/suggestions.html", {"team": team, "options": options, "existing": existing})
+        existing_cards = _suggestion_cards(existing, profile, team)
+    empty_state = _suggestion_empty_state(profile, team, interval, options)
+    return render(
+        request,
+        "ladder/suggestions.html",
+        {"team": team, "options": options, "existing_cards": existing_cards, "empty_state": empty_state},
+    )
 
 
 @login_required
