@@ -1,0 +1,20 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Admin Bootstrap | BC Ladder{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <h1>Admin Bootstrap</h1>
+    {% if disabled_reason %}
+        <p class="muted">{{ disabled_reason }}</p>
+        <a class="button secondary" href="{% url 'admin:login' %}">Go to admin login</a>
+    {% else %}
+        <p class="muted">Create the first admin account from Render environment variables. Remove the bootstrap environment variables after this succeeds.</p>
+        <form method="post">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit">Create admin account</button>
+        </form>
+    {% endif %}
+</section>
+{% endblock %}

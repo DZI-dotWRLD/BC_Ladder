@@ -1,14 +1,26 @@
+import hmac
+import os
 from datetime import timedelta
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamCreateForm, TeamJoinForm
+from .forms import (
+    AdminBootstrapForm,
+    AvailabilityForm,
+    PlayerRegistrationForm,
+    ProfileSetupForm,
+    ScoreSubmissionForm,
+    TeamCreateForm,
+    TeamJoinForm,
+)
 from .models import (
     AvailabilitySlot,
     LadderStanding,
@@ -240,6 +252,43 @@ def _suggestion_cards(suggestions, profile, team):
             }
         )
     return cards
+
+
+def _admin_bootstrap_config():
+    return {
+        "token": os.environ.get("ADMIN_BOOTSTRAP_TOKEN", ""),
+        "username": os.environ.get("ADMIN_BOOTSTRAP_USERNAME", ""),
+        "email": os.environ.get("ADMIN_BOOTSTRAP_EMAIL", ""),
+        "password": os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", ""),
+    }
+
+
+def admin_bootstrap(request):
+    config = _admin_bootstrap_config()
+    if not config["token"] or not config["username"] or not config["password"]:
+        raise Http404("Admin bootstrap is disabled.")
+
+    user_model = get_user_model()
+    if user_model.objects.filter(is_superuser=True).exists():
+        return render(request, "ladder/admin_bootstrap.html", {"disabled_reason": "A superuser already exists."})
+
+    form = AdminBootstrapForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        submitted_token = form.cleaned_data["token"]
+        if not hmac.compare_digest(submitted_token, config["token"]):
+            messages.error(request, "Invalid bootstrap token.")
+        elif user_model.objects.filter(username=config["username"]).exists():
+            messages.error(request, "Bootstrap username already exists. Choose a different ADMIN_BOOTSTRAP_USERNAME.")
+        else:
+            user_model.objects.create_superuser(
+                username=config["username"],
+                email=config["email"],
+                password=config["password"],
+            )
+            messages.success(request, "Admin account created. Remove the ADMIN_BOOTSTRAP_* env vars now.")
+            return redirect("admin:login")
+
+    return render(request, "ladder/admin_bootstrap.html", {"form": form})
 
 
 def register(request):
