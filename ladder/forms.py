@@ -57,14 +57,6 @@ class TeamCreateForm(forms.Form):
         return name
 
 
-class AdminBootstrapForm(forms.Form):
-    token = forms.CharField(
-        label="Bootstrap token",
-        strip=False,
-        widget=forms.PasswordInput(attrs={"autocomplete": "off"}),
-    )
-
-
 class ProfileSetupForm(forms.ModelForm):
     class Meta:
         model = PlayerProfile

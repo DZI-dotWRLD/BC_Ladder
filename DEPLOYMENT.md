@@ -105,35 +105,6 @@ the app accepts Render's `RENDER_EXTERNAL_HOSTNAME` as the default host. Set
 Do not run migrations inside the start command. That can create startup races
 and makes rollback harder.
 
-## Render Free admin bootstrap
-
-Render Free does not provide Shell access. To create the first Django admin
-without shell, temporarily set these Render environment variables:
-
-```text
-ADMIN_BOOTSTRAP_TOKEN=<long-random-one-time-token>
-ADMIN_BOOTSTRAP_USERNAME=<admin-username>
-ADMIN_BOOTSTRAP_EMAIL=<admin-email>
-ADMIN_BOOTSTRAP_PASSWORD=<strong-one-time-password>
-```
-
-After redeploy, visit:
-
-```text
-https://<render-host>/admin-bootstrap/
-```
-
-Submit the bootstrap token. The endpoint creates one superuser and redirects to
-`/admin/`. It is disabled when the token, username, or password env vars are
-missing, and it refuses to create another admin after any superuser exists.
-
-Immediately after the admin account is created:
-
-1. Remove all `ADMIN_BOOTSTRAP_*` variables from Render.
-2. Redeploy or restart the service.
-3. Log in at `/admin/`.
-4. Change the admin password from Django admin if desired.
-
 ## Smoke checks
 
 After deploy:

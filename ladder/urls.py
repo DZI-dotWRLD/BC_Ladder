@@ -7,7 +7,6 @@ app_name = "ladder"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
-    path("admin-bootstrap/", views.admin_bootstrap, name="admin_bootstrap"),
     path("accounts/register/", views.register, name="register"),
     path("accounts/login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),

@@ -1,6 +1,5 @@
 from datetime import date, datetime, time, timedelta
 from io import StringIO
-from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -1306,54 +1305,6 @@ class PhaseARequestTests(TestCase):
         self.assertRedirects(response, reverse("ladder:dashboard"))
         self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
-
-    def test_admin_bootstrap_is_disabled_without_env(self):
-        with patch.dict(
-            "os.environ",
-            {
-                "ADMIN_BOOTSTRAP_TOKEN": "",
-                "ADMIN_BOOTSTRAP_USERNAME": "",
-                "ADMIN_BOOTSTRAP_PASSWORD": "",
-            },
-        ):
-            response = self.client.get(reverse("ladder:admin_bootstrap"))
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_admin_bootstrap_rejects_wrong_token_and_creates_superuser(self):
-        env = {
-            "ADMIN_BOOTSTRAP_TOKEN": "correct-token",
-            "ADMIN_BOOTSTRAP_USERNAME": "bootstrap-admin",
-            "ADMIN_BOOTSTRAP_EMAIL": "admin@example.com",
-            "ADMIN_BOOTSTRAP_PASSWORD": "StrongAdminPass123!",
-        }
-        with patch.dict("os.environ", env):
-            get_response = self.client.get(reverse("ladder:admin_bootstrap"))
-            wrong_response = self.client.post(reverse("ladder:admin_bootstrap"), {"token": "wrong-token"})
-            success_response = self.client.post(reverse("ladder:admin_bootstrap"), {"token": "correct-token"})
-
-        user = get_user_model().objects.get(username="bootstrap-admin")
-        self.assertContains(get_response, "Create the first admin account")
-        self.assertContains(wrong_response, "Invalid bootstrap token.")
-        self.assertRedirects(success_response, reverse("admin:login"))
-        self.assertTrue(user.is_staff)
-        self.assertTrue(user.is_superuser)
-        self.assertTrue(user.check_password("StrongAdminPass123!"))
-
-    def test_admin_bootstrap_refuses_when_superuser_exists(self):
-        get_user_model().objects.create_superuser(username="existing-admin", password="pass")
-        with patch.dict(
-            "os.environ",
-            {
-                "ADMIN_BOOTSTRAP_TOKEN": "token",
-                "ADMIN_BOOTSTRAP_USERNAME": "new-admin",
-                "ADMIN_BOOTSTRAP_PASSWORD": "StrongAdminPass123!",
-            },
-        ):
-            response = self.client.post(reverse("ladder:admin_bootstrap"), {"token": "token"})
-
-        self.assertContains(response, "A superuser already exists.")
-        self.assertFalse(get_user_model().objects.filter(username="new-admin").exists())
 
     def test_dashboard_redirects_user_without_profile_to_setup(self):
         user = get_user_model().objects.create_user(username="needs-profile", password="pass")
