@@ -1,0 +1,17 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Cancel Match | BC Ladder{% endblock %}
+
+{% block content %}
+<h1>Cancel this match?</h1>
+<section class="panel">
+    <h2>{{ match.team_a.name }} vs {{ match.team_b.name }}</h2>
+    <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A" }}</p>
+    <p class="muted">This releases the reservation for all four selected players. The cancellation cannot be undone; rebooking requires a new suggestion.</p>
+    <form method="post" action="{% url 'ladder:cancel_match' match.id %}">
+        {% csrf_token %}
+        <button class="danger" type="submit">Cancel match for everyone</button>
+        <a class="button secondary" href="{% url 'ladder:match_detail' match.id %}">Keep match</a>
+    </form>
+</section>
+{% endblock %}

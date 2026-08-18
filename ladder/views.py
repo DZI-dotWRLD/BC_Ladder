@@ -24,6 +24,7 @@ from .services import (
     accept_suggestion,
     cancel_availability,
     cancel_join_request,
+    cancel_match,
     create_match_suggestion,
     create_team_for_player,
     find_opponent_suggestions,
@@ -65,13 +66,24 @@ def _message_domain_error(request, error):
 
 def _player_match_queryset(profile):
     team = _active_team(profile)
-    if not team:
-        return Match.objects.none()
+    ownership_filter = Q(participants__player=profile)
+    if team:
+        ownership_filter |= Q(team_a=team) | Q(team_b=team)
     return (
-        Match.objects.filter(Q(team_a=team) | Q(team_b=team))
+        Match.objects.filter(ownership_filter)
         .select_related("team_a", "team_b")
         .prefetch_related("participants__player__user", "result_submissions__sets")
+        .distinct()
         .order_by("-scheduled_starts_at", "-scheduled_week_start_date", "-scheduled_start_time")
+    )
+
+
+def _participant_match_queryset(profile):
+    return (
+        Match.objects.filter(participants__player=profile)
+        .select_related("team_a", "team_b")
+        .prefetch_related("participants__player__user", "result_submissions__sets")
+        .distinct()
     )
 
 
@@ -547,11 +559,40 @@ def match_detail(request, match_id):
     if profile is None:
         return redirect("ladder:profile_setup")
     match = get_object_or_404(_player_match_queryset(profile), pk=match_id)
+    is_selected_participant = profile.id in {participant.player_id for participant in match.participants.all()}
+    can_cancel = is_selected_participant and match.status == Match.STATUS_SCHEDULED and not match.result_submissions.all()
     return render(
         request,
         "ladder/match_detail.html",
-        {"match": match, "status": get_match_status(match), "score_form": ScoreSubmissionForm()},
+        {
+            "match": match,
+            "status": get_match_status(match),
+            "score_form": ScoreSubmissionForm(),
+            "is_selected_participant": is_selected_participant,
+            "can_cancel": can_cancel,
+        },
     )
+
+
+@login_required
+def cancel_match_view(request, match_id):
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    match = get_object_or_404(_participant_match_queryset(profile), pk=match_id)
+    if request.method == "GET":
+        if match.status != Match.STATUS_SCHEDULED or match.result_submissions.all():
+            messages.error(request, "This match can no longer be cancelled.")
+            return redirect("ladder:match_detail", match_id=match.id)
+        return render(request, "ladder/match_cancel_confirm.html", {"match": match})
+    if request.method != "POST":
+        return redirect("ladder:match_detail", match_id=match.id)
+    try:
+        cancel_match(request.user, match)
+        messages.success(request, "Match cancelled. All four players are no longer reserved for this time.")
+    except DomainError as error:
+        _message_domain_error(request, error)
+    return redirect("ladder:match_detail", match_id=match.id)
 
 
 @login_required

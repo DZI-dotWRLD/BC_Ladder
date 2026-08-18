@@ -20,12 +20,14 @@ from .models import (
     PlayerProfile,
     PointLedger,
     Team,
+    WorkflowEvent,
 )
 from .services import (
     BookingCollision,
     InvalidInput,
     StaleState,
     accept_suggestion,
+    cancel_match,
     create_match_suggestion,
     finalize_match_result,
     find_opponent_suggestions,
@@ -506,6 +508,71 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         self.assertEqual(MatchResultSubmission.objects.get(match=match, submitting_team=team_a).sets.count(), 2)
         self.assertEqual(ConfirmedMatchResult.objects.filter(match=match).count(), 0)
         self.assertEqual(PointLedger.objects.filter(match=match).count(), 0)
+
+    def test_concurrent_match_cancellation_is_idempotent(self):
+        team_a, team_a_players = self.create_team_with_members("pg-cancel-a", 2)
+        team_b, team_b_players = self.create_team_with_members("pg-cancel-b", 2)
+        starts_at = self.make_dt(2027, 9, 20, 18)
+        ends_at = self.make_dt(2027, 9, 20, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 9, 27, 18))
+        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
+        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+
+        results = self.run_concurrently(
+            [
+                lambda: cancel_match(
+                    get_user_model().objects.get(pk=team_a_players[0].user_id),
+                    Match.objects.get(pk=match.pk),
+                ),
+                lambda: cancel_match(
+                    get_user_model().objects.get(pk=team_b_players[0].user_id),
+                    Match.objects.get(pk=match.pk),
+                ),
+            ]
+        )
+
+        self.assertEqual([status for status, _ in results], ["ok", "ok"])
+        match.refresh_from_db()
+        self.assertEqual(match.status, Match.STATUS_CANCELLED)
+        self.assertEqual(MatchReservation.objects.filter(match=match, status=MatchReservation.STATUS_RELEASED).count(), 4)
+        self.assertEqual(WorkflowEvent.objects.filter(match=match, event_type=WorkflowEvent.EventType.MATCH_CANCELLED).count(), 1)
+
+    def test_score_submission_and_cancellation_serialize_to_one_outcome(self):
+        team_a, team_a_players = self.create_team_with_members("pg-cancel-score-a", 2)
+        team_b, team_b_players = self.create_team_with_members("pg-cancel-score-b", 2)
+        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 21, 18), self.make_dt(2027, 9, 21, 20))
+        self.add_match_participants(match, team_a_players, team_b_players)
+
+        results = self.run_concurrently(
+            [
+                lambda: cancel_match(
+                    get_user_model().objects.get(pk=team_a_players[0].user_id),
+                    Match.objects.get(pk=match.pk),
+                ),
+                lambda: submit_match_result(
+                    get_user_model().objects.get(pk=team_b_players[0].user_id),
+                    Match.objects.get(pk=match.pk),
+                    [(6, 4), (6, 4)],
+                ),
+            ]
+        )
+
+        successes = [value for status, value in results if status == "ok"]
+        errors = [error for status, error in results if status == "error"]
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], StaleState)
+        match.refresh_from_db()
+        if match.status == Match.STATUS_CANCELLED:
+            self.assertEqual(MatchResultSubmission.objects.filter(match=match).count(), 0)
+            self.assertEqual(WorkflowEvent.objects.filter(match=match, event_type=WorkflowEvent.EventType.MATCH_CANCELLED).count(), 1)
+        else:
+            self.assertEqual(match.status, Match.STATUS_SCHEDULED)
+            self.assertEqual(MatchResultSubmission.objects.filter(match=match).count(), 1)
+            self.assertEqual(WorkflowEvent.objects.filter(match=match, event_type=WorkflowEvent.EventType.MATCH_CANCELLED).count(), 0)
 
     def test_concurrent_finalization_of_opposite_winners_locks_standings_stably(self):
         team_a, team_a_players = self.create_team_with_members("pg-opposite-a", 2)

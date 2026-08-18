@@ -23,6 +23,7 @@ urlpatterns = [
     path("suggestions/<int:suggestion_id>/accept/", views.accept_suggestion_view, name="accept_suggestion"),
     path("matches/", views.match_history, name="matches"),
     path("matches/<int:match_id>/", views.match_detail, name="match_detail"),
+    path("matches/<int:match_id>/cancel/", views.cancel_match_view, name="cancel_match"),
     path("matches/<int:match_id>/score/", views.submit_score, name="submit_score"),
     path("ladders/<str:division>/", views.ladder, name="ladder"),
 ]

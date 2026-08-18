@@ -1679,6 +1679,59 @@ class PhaseARequestTests(TestCase):
         self.assertEqual(match.status, Match.STATUS_COMPLETED)
         self.assertEqual(PointLedger.objects.filter(match=match).count(), 2)
 
+    def test_selected_participant_confirms_and_performs_match_cancellation(self):
+        team_a, team_a_players = self.create_team_with_members("cancel-request-a", 3)
+        team_b, team_b_players = self.create_team_with_members("cancel-request-b", 2)
+        outsider = self.create_profile("cancel-request-outsider")
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2027, 9, 6),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2027, 9, 6, 18),
+            scheduled_ends_at=self.make_dt(2027, 9, 6, 20),
+        )
+        self.add_match_participants(match, team_a_players[:2], team_b_players)
+        cancel_url = reverse("ladder:cancel_match", args=[match.id])
+
+        self.client.force_login(team_a_players[2].user)
+        teammate_detail = self.client.get(reverse("ladder:match_detail", args=[match.id]))
+        teammate_cancel = self.client.get(cancel_url)
+        self.assertEqual(teammate_detail.status_code, 200)
+        self.assertNotContains(teammate_detail, cancel_url)
+        self.assertNotContains(teammate_detail, "Submit Score")
+        self.assertEqual(teammate_cancel.status_code, 404)
+
+        self.client.force_login(outsider.user)
+        self.assertEqual(self.client.get(reverse("ladder:match_detail", args=[match.id])).status_code, 404)
+
+        selected_player = team_a_players[0]
+        membership = TeamMembership.objects.get(player=selected_player, status=TeamMembership.STATUS_ACTIVE)
+        membership.status = TeamMembership.STATUS_INACTIVE
+        membership.effective_to = timezone.now()
+        membership.save(update_fields=["status", "effective_to", "updated_at"])
+        selected_player.team = None
+        selected_player.save(update_fields=["team"])
+
+        self.client.force_login(selected_player.user)
+        historical_detail = self.client.get(reverse("ladder:match_detail", args=[match.id]))
+        confirmation = self.client.get(cancel_url)
+        match.refresh_from_db()
+        self.assertEqual(historical_detail.status_code, 200)
+        self.assertContains(historical_detail, cancel_url)
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertContains(confirmation, "The cancellation cannot be undone")
+        self.assertEqual(match.status, Match.STATUS_SCHEDULED)
+
+        response = self.client.post(cancel_url)
+
+        match.refresh_from_db()
+        self.assertRedirects(response, reverse("ladder:match_detail", args=[match.id]))
+        self.assertEqual(match.status, Match.STATUS_CANCELLED)
+        self.assertEqual(WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.MATCH_CANCELLED).actor, selected_player.user)
+
     def test_ladder_page_is_authenticated_and_scoped_by_division(self):
         mens_team = Team.objects.create(name="Mens Ladder Team", division=Team.DIVISION_MENS)
         womens_team = Team.objects.create(name="Womens Ladder Team", division=Team.DIVISION_WOMENS)
@@ -1729,8 +1782,8 @@ class PhaseA5OperationsTests(TestCase):
                 lineup_order=order,
             )
 
-    def make_dt(self, year, month, day, hour):
-        return datetime(year, month, day, hour, tzinfo=self.club_tz)
+    def make_dt(self, year, month, day, hour, minute=0):
+        return datetime(year, month, day, hour, minute, tzinfo=self.club_tz)
 
     def test_admin_can_reject_and_approve_removal_requests(self):
         admin_profile = self.create_profile("ops-admin", is_staff=True)
@@ -1888,6 +1941,90 @@ class PhaseA5OperationsTests(TestCase):
         )
         cancel_match(admin_profile.user, match)
         self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.MATCH_CANCELLED).count(), 1)
+
+    def test_selected_participant_can_cancel_but_other_players_cannot(self):
+        team_a, team_a_players = self.create_team_with_members("participant-cancel-a", 3)
+        team_b, team_b_players = self.create_team_with_members("participant-cancel-b", 2)
+        outsider = self.create_profile("participant-cancel-outsider")
+        starts_at = self.make_dt(2027, 8, 17, 18)
+        ends_at = self.make_dt(2027, 8, 17, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 8, 24, 18))
+        selected_player_ids = {player.id for player in option["team_a_players"] + option["team_b_players"]}
+        selected_player = next(player for player in team_a_players if player.id in selected_player_ids)
+        non_lineup_teammate = next(player for player in team_a_players if player.id not in selected_player_ids)
+        accept_suggestion(option["team_a_players"][0].user, suggestion, suggestion.version)
+        match = accept_suggestion(option["team_b_players"][0].user, suggestion, suggestion.version)
+
+        with self.assertRaises(AuthorizationFailure):
+            cancel_match(non_lineup_teammate.user, match)
+        with self.assertRaises(AuthorizationFailure):
+            cancel_match(outsider.user, match)
+
+        cancelled = cancel_match(selected_player.user, match)
+
+        self.assertEqual(cancelled.status, Match.STATUS_CANCELLED)
+        self.assertEqual(WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.MATCH_CANCELLED).actor, selected_player.user)
+
+    def test_match_cancellation_is_blocked_after_first_score_submission_for_everyone(self):
+        admin = self.create_profile("score-cutoff-admin", is_staff=True)
+        team_a, team_a_players = self.create_team_with_members("score-cutoff-a", 2)
+        team_b, team_b_players = self.create_team_with_members("score-cutoff-b", 2)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2027, 8, 23),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2027, 8, 23, 18),
+            scheduled_ends_at=self.make_dt(2027, 8, 23, 20),
+        )
+        self.add_match_participants(match, team_a_players, team_b_players)
+        submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+
+        with self.assertRaises(StaleState):
+            cancel_match(team_a_players[0].user, match)
+        with self.assertRaises(StaleState):
+            cancel_match(admin.user, match)
+
+        match.refresh_from_db()
+        self.assertEqual(match.status, Match.STATUS_SCHEDULED)
+        self.assertFalse(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.MATCH_CANCELLED).exists())
+
+    def test_cancellation_preserves_overlapping_replacement_availability(self):
+        team_a, team_a_players = self.create_team_with_members("overlap-cancel-a", 2)
+        team_b, team_b_players = self.create_team_with_members("overlap-cancel-b", 2)
+        starts_at = self.make_dt(2027, 8, 30, 18)
+        ends_at = self.make_dt(2027, 8, 30, 20)
+        original_slots = {player.id: save_availability(player.user, starts_at, ends_at) for player in team_a_players + team_b_players}
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 9, 6, 18))
+        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
+        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        replacement_player = team_a_players[0]
+        replacement = save_availability(
+            replacement_player.user,
+            self.make_dt(2027, 8, 30, 18, 30),
+            self.make_dt(2027, 8, 30, 20, 30),
+        )
+
+        cancel_match(replacement_player.user, match)
+
+        for slot in original_slots.values():
+            slot.refresh_from_db()
+        replacement.refresh_from_db()
+        suggestion.refresh_from_db()
+        event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.MATCH_CANCELLED)
+        self.assertEqual(original_slots[replacement_player.id].status, AvailabilitySlot.STATUS_CANCELLED)
+        self.assertEqual(replacement.status, AvailabilitySlot.STATUS_ACTIVE)
+        self.assertEqual(
+            event.metadata["superseded_availability_ids"],
+            [original_slots[replacement_player.id].id],
+        )
+        self.assertEqual(suggestion.status, MatchSuggestion.STATUS_CONFIRMED)
 
     def test_completed_match_cannot_be_cancelled(self):
         admin_profile = self.create_profile("completed-admin", is_staff=True)

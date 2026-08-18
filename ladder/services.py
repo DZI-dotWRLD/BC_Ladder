@@ -472,15 +472,35 @@ def resolve_membership_request(admin_actor, membership, decision):
         return locked_membership
 
 
-def cancel_match(admin_actor, match):
-    if not getattr(admin_actor, "is_staff", False):
-        raise AuthorizationFailure("Only administrators may cancel matches.")
+def cancel_match(actor, match):
+    if not getattr(actor, "is_authenticated", False):
+        raise AuthorizationFailure("Authentication is required.")
     with transaction.atomic():
         locked_match = Match.objects.select_for_update().get(pk=match.pk)
+        participants = list(
+            MatchParticipant.objects.select_for_update().filter(match=locked_match).select_related("player").order_by("player_id", "id")
+        )
+        participant_user_ids = {participant.player.user_id for participant in participants}
+        if not actor.is_staff and actor.id not in participant_user_ids:
+            raise AuthorizationFailure("Only selected match participants or administrators may cancel matches.")
         if locked_match.status == Match.STATUS_COMPLETED:
             raise StaleState("Completed matches cannot be cancelled.")
         if locked_match.status == Match.STATUS_CANCELLED:
             return locked_match
+        if MatchResultSubmission.objects.select_for_update().filter(match=locked_match).exists():
+            raise StaleState("Matches cannot be cancelled after a score has been submitted.")
+
+        list(
+            PlayerProfile.objects.select_for_update().filter(id__in=[participant.player_id for participant in participants]).order_by("id")
+        )
+        list(
+            AvailabilitySlot.objects.select_for_update()
+            .filter(
+                player_id__in=[participant.player_id for participant in participants],
+                status=AvailabilitySlot.STATUS_ACTIVE,
+            )
+            .order_by("player_id", "id")
+        )
 
         reservations = list(
             locked_match.reservations.select_for_update().filter(status=MatchReservation.STATUS_ACTIVE).order_by("player_id", "id")
@@ -492,6 +512,7 @@ def cancel_match(admin_actor, match):
             )
         }
         restored_availability_ids = []
+        superseded_availability_ids = []
         for reservation in reservations:
             reservation.status = MatchReservation.STATUS_RELEASED
             reservation.save(update_fields=["status"])
@@ -501,24 +522,40 @@ def cancel_match(admin_actor, match):
                     availability.match_reservations.exclude(pk=reservation.pk).filter(status=MatchReservation.STATUS_ACTIVE).exists()
                 )
                 if not has_other_active:
-                    availability.status = AvailabilitySlot.STATUS_ACTIVE
+                    has_overlapping_active = (
+                        availability.starts_at
+                        and availability.ends_at
+                        and AvailabilitySlot.objects.filter(
+                            player_id=availability.player_id,
+                            status=AvailabilitySlot.STATUS_ACTIVE,
+                            starts_at__lt=availability.ends_at,
+                            ends_at__gt=availability.starts_at,
+                        )
+                        .exclude(pk=availability.pk)
+                        .exists()
+                    )
+                    availability.status = AvailabilitySlot.STATUS_CANCELLED if has_overlapping_active else AvailabilitySlot.STATUS_ACTIVE
                     availability.save(update_fields=["status"])
-                    restored_availability_ids.append(availability.id)
+                    if has_overlapping_active:
+                        superseded_availability_ids.append(availability.id)
+                    else:
+                        restored_availability_ids.append(availability.id)
 
         locked_match.status = Match.STATUS_CANCELLED
         locked_match.save(update_fields=["status", "updated_at"])
         record_workflow_event(
             event_type=WorkflowEvent.EventType.MATCH_CANCELLED,
             dedupe_key=f"match_cancelled:{locked_match.id}",
-            actor=admin_actor,
+            actor=actor,
             match=locked_match,
-            recipient_user_ids=match_participant_user_ids(locked_match),
+            recipient_user_ids=participant_user_ids,
             previous_state=Match.STATUS_SCHEDULED,
             new_state=Match.STATUS_CANCELLED,
             metadata={
                 "team_a_id": locked_match.team_a_id,
                 "team_b_id": locked_match.team_b_id,
                 "restored_availability_ids": restored_availability_ids,
+                "superseded_availability_ids": superseded_availability_ids,
             },
         )
         return locked_match
@@ -603,6 +640,7 @@ def save_availability(actor, starts_at, ends_at):
         raise InvalidInput("Availability windows must start and end on the same club-time day.")
 
     with transaction.atomic():
+        player = PlayerProfile.objects.select_for_update().get(pk=player.pk)
         active_slots = AvailabilitySlot.objects.select_for_update().filter(
             player=player,
             status=AvailabilitySlot.STATUS_ACTIVE,
