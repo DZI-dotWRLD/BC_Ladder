@@ -30,6 +30,7 @@ from .models import (
     ScoreCorrectionAudit,
     Team,
     TeamMembership,
+    WorkflowEvent,
 )
 from .services import (
     AuthorizationFailure,
@@ -1019,6 +1020,12 @@ class RemediationServiceTests(TestCase):
         request.refresh_from_db()
         self.assertIsNone(requester.team)
         self.assertEqual(request.status, TeamMembership.STATUS_JOIN_REQUESTED)
+        self.assertFalse(
+            WorkflowEvent.objects.filter(
+                membership=request,
+                event_type=WorkflowEvent.EventType.JOIN_REQUEST_APPROVED,
+            ).exists()
+        )
 
     def test_admin_rejects_join_request_without_active_membership(self):
         team = Team.objects.create(name="join-reject-team", division=Team.DIVISION_MENS)
@@ -1177,12 +1184,21 @@ class RemediationServiceTests(TestCase):
         create_admin_notification_for_conflict(match)
         self.assertEqual(AdminNotification.objects.filter(match=match, is_resolved=False).count(), 1)
 
-        match.result_submissions.all().delete()
-        match.admin_notifications.all().delete()
-        submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
-        submit_match_result(team_b_players[0].user, match, [(6, 4), (6, 4)])
-        finalize_match_result(match)
-        finalize_match_result(match)
+        confirmed_match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 7, 13),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18, 0),
+            scheduled_end_time=time(20, 0),
+            scheduled_starts_at=self.make_dt(2026, 7, 13, 18),
+            scheduled_ends_at=self.make_dt(2026, 7, 13, 20),
+        )
+        self.add_match_participants(confirmed_match, team_a_players[:2], team_b_players)
+        submit_match_result(team_a_players[0].user, confirmed_match, [(6, 4), (6, 4)])
+        submit_match_result(team_b_players[0].user, confirmed_match, [(6, 4), (6, 4)])
+        finalize_match_result(confirmed_match)
+        finalize_match_result(confirmed_match)
         team_a.standing.refresh_from_db()
         team_b.standing.refresh_from_db()
 
@@ -1190,7 +1206,7 @@ class RemediationServiceTests(TestCase):
         self.assertEqual(team_a.standing.wins, 1)
         self.assertEqual(team_b.standing.losses, 1)
         self.assertEqual(ConfirmedMatchResult.objects.count(), 1)
-        self.assertEqual(PointLedger.objects.filter(match=match).count(), 2)
+        self.assertEqual(PointLedger.objects.filter(match=confirmed_match).count(), 2)
 
     def test_ladder_positions_use_approved_tiebreak_order(self):
         alpha = Team.objects.create(name="Alpha Club", division=Team.DIVISION_MENS)
@@ -1735,6 +1751,117 @@ class PhaseA5OperationsTests(TestCase):
         self.assertIsNone(players[0].team)
         self.assertTrue(TeamMembership.objects.filter(team=team, player=players[0]).exists())
 
+    def test_membership_workflow_events_are_deduplicated_and_snapshot_recipients(self):
+        admin = self.create_profile("event-admin", is_staff=True)
+        other_admin = self.create_profile("event-other-admin", is_staff=True)
+        inactive_admin = self.create_profile("event-inactive-admin", is_staff=True)
+        inactive_admin.user.is_active = False
+        inactive_admin.user.save(update_fields=["is_active"])
+        team = Team.objects.create(name="event-membership-team", division=Team.DIVISION_MENS)
+
+        cancelled_player = self.create_profile("event-cancelled-player")
+        cancelled_request = request_membership_change(cancelled_player.user, cancelled_player, team, "request_join")
+        repeated_request = request_membership_change(cancelled_player.user, cancelled_player, team, "request_join")
+
+        self.assertEqual(repeated_request.pk, cancelled_request.pk)
+        created_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.JOIN_REQUEST_CREATED)
+        self.assertEqual(created_event.actor, cancelled_player.user)
+        self.assertEqual(created_event.membership, cancelled_request)
+        self.assertEqual(
+            set(created_event.recipients.values_list("user_id", flat=True)),
+            {cancelled_player.user_id, admin.user_id, other_admin.user_id},
+        )
+
+        cancelled_membership = cancel_join_request(cancelled_player.user, cancelled_player)
+        repeated_cancel = cancel_join_request(cancelled_player.user, cancelled_player)
+        self.assertEqual(repeated_cancel.pk, cancelled_membership.pk)
+        cancelled_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.JOIN_REQUEST_CANCELLED)
+        self.assertEqual(cancelled_event.previous_state, TeamMembership.STATUS_JOIN_REQUESTED)
+        self.assertEqual(cancelled_event.new_state, TeamMembership.STATUS_INACTIVE)
+        self.assertEqual(
+            set(cancelled_event.recipients.values_list("user_id", flat=True)),
+            {cancelled_player.user_id, admin.user_id, other_admin.user_id},
+        )
+
+        approved_player = self.create_profile("event-approved-player")
+        approved_request = request_membership_change(approved_player.user, approved_player, team, "request_join")
+        resolve_membership_request(admin.user, approved_request, "approve")
+        resolve_membership_request(admin.user, approved_request, "approve")
+        approved_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.JOIN_REQUEST_APPROVED)
+        self.assertEqual(
+            set(approved_event.recipients.values_list("user_id", flat=True)),
+            {approved_player.user_id, admin.user_id},
+        )
+
+        rejected_player = self.create_profile("event-rejected-player")
+        rejected_request = request_membership_change(rejected_player.user, rejected_player, team, "request_join")
+        resolve_membership_request(admin.user, rejected_request, "reject")
+        resolve_membership_request(admin.user, rejected_request, "reject")
+        rejected_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.JOIN_REQUEST_REJECTED)
+        self.assertEqual(
+            set(rejected_event.recipients.values_list("user_id", flat=True)),
+            {rejected_player.user_id, admin.user_id},
+        )
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.JOIN_REQUEST_CREATED).count(), 3)
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.JOIN_REQUEST_CANCELLED).count(), 1)
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.JOIN_REQUEST_APPROVED).count(), 1)
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.JOIN_REQUEST_REJECTED).count(), 1)
+
+    def test_match_and_score_workflow_events_snapshot_exact_recipients(self):
+        admin = self.create_profile("score-event-admin", is_staff=True)
+        other_admin = self.create_profile("score-event-other-admin", is_staff=True)
+        team_a, team_a_players = self.create_team_with_members("score-event-a", 2)
+        team_b, team_b_players = self.create_team_with_members("score-event-b", 2)
+        starts_at = self.make_dt(2027, 8, 3, 18)
+        ends_at = self.make_dt(2027, 8, 3, 20)
+        for player in team_a_players + team_b_players:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 8, 10, 18))
+
+        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
+        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        repeated_match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        participant_user_ids = {player.user_id for player in team_a_players + team_b_players}
+
+        self.assertEqual(repeated_match.pk, match.pk)
+        confirmed_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.MATCH_CONFIRMED)
+        self.assertEqual(confirmed_event.actor, team_b_players[0].user)
+        self.assertEqual(set(confirmed_event.recipients.values_list("user_id", flat=True)), participant_user_ids)
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.MATCH_CONFIRMED).count(), 1)
+
+        first_submission = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+        repeated_submission = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+
+        self.assertEqual(repeated_submission.pk, first_submission.pk)
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.SCORE_SUBMITTED).count(), 1)
+
+        second_submission = submit_match_result(team_b_players[0].user, match, [(4, 6), (4, 6)])
+        score_events = WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.SCORE_SUBMITTED).order_by("submission_id")
+        self.assertEqual(score_events.count(), 2)
+        self.assertEqual({event.submission_id for event in score_events}, {first_submission.id, second_submission.id})
+        for event in score_events:
+            self.assertEqual(set(event.recipients.values_list("user_id", flat=True)), participant_user_ids)
+
+        notification = AdminNotification.objects.get(match=match, is_resolved=False)
+        conflict_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.SCORE_CONFLICT_CREATED)
+        self.assertEqual(conflict_event.actor, team_b_players[0].user)
+        self.assertEqual(
+            set(conflict_event.recipients.values_list("user_id", flat=True)),
+            participant_user_ids | {admin.user_id, other_admin.user_id},
+        )
+
+        audit = resolve_score_conflict(admin.user, notification, first_submission)
+        repeated_audit = resolve_score_conflict(admin.user, notification, first_submission)
+        self.assertEqual(repeated_audit.pk, audit.pk)
+        resolved_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.SCORE_CONFLICT_RESOLVED)
+        self.assertEqual(resolved_event.score_correction_audit, audit)
+        self.assertEqual(
+            set(resolved_event.recipients.values_list("user_id", flat=True)),
+            participant_user_ids | {admin.user_id},
+        )
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.SCORE_CONFLICT_RESOLVED).count(), 1)
+
     def test_cancel_match_releases_reservations_and_restores_availability(self):
         admin_profile = self.create_profile("cancel-admin", is_staff=True)
         team_a, team_a_players = self.create_team_with_members("cancel-a", 2)
@@ -1753,6 +1880,14 @@ class PhaseA5OperationsTests(TestCase):
         self.assertEqual(cancelled.status, Match.STATUS_CANCELLED)
         self.assertEqual(MatchReservation.objects.filter(match=match, status=MatchReservation.STATUS_RELEASED).count(), 4)
         self.assertEqual(AvailabilitySlot.objects.filter(status=AvailabilitySlot.STATUS_ACTIVE).count(), 4)
+        cancelled_event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.MATCH_CANCELLED)
+        self.assertEqual(cancelled_event.actor, admin_profile.user)
+        self.assertEqual(
+            set(cancelled_event.recipients.values_list("user_id", flat=True)),
+            {player.user_id for player in team_a_players + team_b_players},
+        )
+        cancel_match(admin_profile.user, match)
+        self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.MATCH_CANCELLED).count(), 1)
 
     def test_completed_match_cannot_be_cancelled(self):
         admin_profile = self.create_profile("completed-admin", is_staff=True)

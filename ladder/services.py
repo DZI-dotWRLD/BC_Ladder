@@ -25,7 +25,9 @@ from .models import (
     SuggestionParticipant,
     Team,
     TeamMembership,
+    WorkflowEvent,
 )
+from .workflow_events import active_staff_user_ids, match_participant_user_ids, record_workflow_event
 
 CLUB_TIMEZONE = ZoneInfo("America/New_York")
 WIN_POINTS = 3
@@ -268,12 +270,23 @@ def request_membership_change(actor, player, target_team=None, action="join"):
                     return existing_request
                 raise InvalidInput("Player already has a pending team request.")
 
-            return TeamMembership.objects.create(
+            membership = TeamMembership.objects.create(
                 player=locked_player,
                 team=locked_team,
                 status=TeamMembership.STATUS_JOIN_REQUESTED,
                 effective_from=timezone.now(),
             )
+            record_workflow_event(
+                event_type=WorkflowEvent.EventType.JOIN_REQUEST_CREATED,
+                dedupe_key=f"join_request_created:{membership.id}",
+                actor=actor,
+                membership=membership,
+                recipient_user_ids={locked_player.user_id} | active_staff_user_ids(),
+                previous_state="",
+                new_state=TeamMembership.STATUS_JOIN_REQUESTED,
+                metadata={"player_id": locked_player.id, "team_id": locked_team.id, "team_name": locked_team.name},
+            )
+            return membership
 
         membership = TeamMembership.objects.create(
             player=locked_player,
@@ -341,6 +354,15 @@ def cancel_join_request(actor, player):
             .first()
         )
         if not pending_request:
+            latest_membership = (
+                TeamMembership.objects.select_for_update().filter(player=locked_player).order_by("-created_at", "-id").first()
+            )
+            if (
+                latest_membership
+                and latest_membership.status == TeamMembership.STATUS_INACTIVE
+                and latest_membership.workflow_events.filter(event_type=WorkflowEvent.EventType.JOIN_REQUEST_CANCELLED).exists()
+            ):
+                return latest_membership
             raise InvalidInput("Player does not have a pending team join request.")
 
         now = timezone.now()
@@ -349,6 +371,19 @@ def cancel_join_request(actor, player):
         pending_request.resolved_at = now
         pending_request.resolution_note = "Cancelled by player."
         pending_request.save(update_fields=["status", "effective_to", "resolved_at", "resolution_note", "updated_at"])
+        record_workflow_event(
+            event_type=WorkflowEvent.EventType.JOIN_REQUEST_CANCELLED,
+            dedupe_key=f"join_request_cancelled:{pending_request.id}",
+            actor=actor,
+            membership=pending_request,
+            recipient_user_ids={locked_player.user_id} | active_staff_user_ids(),
+            previous_state=TeamMembership.STATUS_JOIN_REQUESTED,
+            new_state=TeamMembership.STATUS_INACTIVE,
+            metadata={
+                "player_id": locked_player.id,
+                "team_id": pending_request.team_id,
+            },
+        )
         return pending_request
 
 
@@ -360,6 +395,12 @@ def resolve_membership_request(admin_actor, membership, decision):
 
     with transaction.atomic():
         locked_membership = TeamMembership.objects.select_for_update().select_related("player", "team").get(pk=membership.pk)
+        resolved_event_type = (
+            WorkflowEvent.EventType.JOIN_REQUEST_APPROVED if decision == "approve" else WorkflowEvent.EventType.JOIN_REQUEST_REJECTED
+        )
+        if locked_membership.workflow_events.filter(event_type=resolved_event_type).exists():
+            return locked_membership
+        is_join_request = locked_membership.status == TeamMembership.STATUS_JOIN_REQUESTED
         now = timezone.now()
         locked_membership.reviewed_by = admin_actor
         locked_membership.resolved_at = now
@@ -410,6 +451,24 @@ def resolve_membership_request(admin_actor, membership, decision):
                 "updated_at",
             ]
         )
+        if is_join_request:
+            event_type = (
+                WorkflowEvent.EventType.JOIN_REQUEST_APPROVED if decision == "approve" else WorkflowEvent.EventType.JOIN_REQUEST_REJECTED
+            )
+            record_workflow_event(
+                event_type=event_type,
+                dedupe_key=f"{event_type}:{locked_membership.id}",
+                actor=admin_actor,
+                membership=locked_membership,
+                recipient_user_ids={locked_membership.player.user_id, admin_actor.id},
+                previous_state=TeamMembership.STATUS_JOIN_REQUESTED,
+                new_state=locked_membership.status,
+                metadata={
+                    "player_id": locked_membership.player_id,
+                    "team_id": locked_membership.team_id,
+                    "team_name": locked_membership.team.name,
+                },
+            )
         return locked_membership
 
 
@@ -432,6 +491,7 @@ def cancel_match(admin_actor, match):
                 id__in=[reservation.availability_id for reservation in reservations if reservation.availability_id]
             )
         }
+        restored_availability_ids = []
         for reservation in reservations:
             reservation.status = MatchReservation.STATUS_RELEASED
             reservation.save(update_fields=["status"])
@@ -443,9 +503,24 @@ def cancel_match(admin_actor, match):
                 if not has_other_active:
                     availability.status = AvailabilitySlot.STATUS_ACTIVE
                     availability.save(update_fields=["status"])
+                    restored_availability_ids.append(availability.id)
 
         locked_match.status = Match.STATUS_CANCELLED
         locked_match.save(update_fields=["status", "updated_at"])
+        record_workflow_event(
+            event_type=WorkflowEvent.EventType.MATCH_CANCELLED,
+            dedupe_key=f"match_cancelled:{locked_match.id}",
+            actor=admin_actor,
+            match=locked_match,
+            recipient_user_ids=match_participant_user_ids(locked_match),
+            previous_state=Match.STATUS_SCHEDULED,
+            new_state=Match.STATUS_CANCELLED,
+            metadata={
+                "team_a_id": locked_match.team_a_id,
+                "team_b_id": locked_match.team_b_id,
+                "restored_availability_ids": restored_availability_ids,
+            },
+        )
         return locked_match
 
 
@@ -486,7 +561,7 @@ def resolve_score_conflict(admin_actor, notification, official_submission=None, 
         )
         locked_notification.is_resolved = True
         locked_notification.save(update_fields=["is_resolved", "updated_at"])
-        return ScoreCorrectionAudit.objects.create(
+        audit = ScoreCorrectionAudit.objects.create(
             match=locked_notification.match,
             corrected_by=admin_actor,
             official_submission=locked_submission,
@@ -497,6 +572,23 @@ def resolve_score_conflict(admin_actor, notification, official_submission=None, 
             reason=ScoreCorrectionAudit.REASON_CONFLICT_RESOLUTION,
             note=note,
         )
+        record_workflow_event(
+            event_type=WorkflowEvent.EventType.SCORE_CONFLICT_RESOLVED,
+            dedupe_key=f"score_conflict_resolved:{audit.id}",
+            actor=admin_actor,
+            match=locked_notification.match,
+            submission=locked_submission,
+            score_correction_audit=audit,
+            recipient_user_ids=match_participant_user_ids(locked_notification.match) | {admin_actor.id},
+            previous_state="conflict",
+            new_state=Match.STATUS_COMPLETED,
+            metadata={
+                "official_submission_id": locked_submission.id,
+                "winning_team_id": winner.id,
+                "losing_team_id": loser.id,
+            },
+        )
+        return audit
 
 
 def save_availability(actor, starts_at, ends_at):
@@ -848,10 +940,10 @@ def accept_suggestion(actor, suggestion, expected_version):
             locked.status = MatchSuggestion.STATUS_PARTIALLY_ACCEPTED
             locked.save(update_fields=["status", "updated_at"])
             return locked
-        return _confirm_suggestion_locked(locked)
+        return _confirm_suggestion_locked(locked, actor)
 
 
-def _confirm_suggestion_locked(suggestion):
+def _confirm_suggestion_locked(suggestion, actor):
     if hasattr(suggestion, "confirmed_match"):
         return suggestion.confirmed_match
 
@@ -914,6 +1006,23 @@ def _confirm_suggestion_locked(suggestion):
 
     suggestion.status = MatchSuggestion.STATUS_CONFIRMED
     suggestion.save(update_fields=["status", "updated_at"])
+    record_workflow_event(
+        event_type=WorkflowEvent.EventType.MATCH_CONFIRMED,
+        dedupe_key=f"match_confirmed:{match.id}",
+        actor=actor,
+        match=match,
+        recipient_user_ids=match_participant_user_ids(match),
+        previous_state="",
+        new_state=Match.STATUS_SCHEDULED,
+        metadata={
+            "source_suggestion_id": suggestion.id,
+            "team_a_id": match.team_a_id,
+            "team_b_id": match.team_b_id,
+            "scheduled_starts_at": suggestion.starts_at.isoformat(),
+            "scheduled_ends_at": suggestion.ends_at.isoformat(),
+            "player_ids": sorted(player_ids),
+        },
+    )
     return match
 
 
@@ -1033,10 +1142,32 @@ def submit_match_result(actor, match, normalized_sets):
                 for item in score["sets"]
             ]
         )
+        record_workflow_event(
+            event_type=WorkflowEvent.EventType.SCORE_SUBMITTED,
+            dedupe_key=f"score_submitted:{submission.id}",
+            actor=actor,
+            match=locked_match,
+            submission=submission,
+            recipient_user_ids=match_participant_user_ids(locked_match),
+            previous_state="not_submitted",
+            new_state="submitted",
+            metadata={
+                "submitting_team_id": submitting_team.id,
+                "score_signature": [
+                    {
+                        "set_order": item["set_order"],
+                        "set_type": item["set_type"],
+                        "team_a_score": item["team_a_score"],
+                        "team_b_score": item["team_b_score"],
+                    }
+                    for item in score["sets"]
+                ],
+            },
+        )
         if get_match_status(locked_match) == "confirmed":
             finalize_match_result(locked_match)
         elif get_match_status(locked_match) == "conflict":
-            create_admin_notification_for_conflict(locked_match)
+            create_admin_notification_for_conflict(locked_match, actor=actor)
         return submission
 
 
@@ -1057,16 +1188,29 @@ def get_match_status(match):
     return "conflict"
 
 
-def create_admin_notification_for_conflict(match):
-    if get_match_status(match) != "conflict":
-        return None
-    notification, _ = AdminNotification.objects.get_or_create(
-        match=match,
-        notification_type=AdminNotification.TYPE_SCORE_CONFLICT,
-        is_resolved=False,
-        defaults={"message": "Result submissions do not match. Admin review is required."},
-    )
-    return notification
+def create_admin_notification_for_conflict(match, actor=None):
+    with transaction.atomic():
+        locked_match = Match.objects.select_for_update().get(pk=match.pk)
+        if get_match_status(locked_match) != "conflict":
+            return None
+        notification, created = AdminNotification.objects.get_or_create(
+            match=locked_match,
+            notification_type=AdminNotification.TYPE_SCORE_CONFLICT,
+            is_resolved=False,
+            defaults={"message": "Result submissions do not match. Admin review is required."},
+        )
+        if created:
+            record_workflow_event(
+                event_type=WorkflowEvent.EventType.SCORE_CONFLICT_CREATED,
+                dedupe_key=f"score_conflict_created:{notification.id}",
+                actor=actor,
+                match=locked_match,
+                recipient_user_ids=match_participant_user_ids(locked_match) | active_staff_user_ids(),
+                previous_state="waiting_for_submissions",
+                new_state="conflict",
+                metadata={"admin_notification_id": notification.id},
+            )
+        return notification
 
 
 def complete_match_if_result_confirmed(match):

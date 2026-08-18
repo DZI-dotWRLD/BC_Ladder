@@ -22,6 +22,8 @@ from .models import (
     SuggestionParticipant,
     Team,
     TeamMembership,
+    WorkflowEvent,
+    WorkflowEventRecipient,
 )
 
 
@@ -338,6 +340,59 @@ class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
         return False
 
 
+class WorkflowEventAdmin(admin.ModelAdmin):
+    list_display = ("event_type", "actor", "membership", "match", "submission", "created_at")
+    list_filter = ("event_type", "created_at")
+    list_select_related = (
+        "actor",
+        "membership__player__user",
+        "membership__team",
+        "match__team_a",
+        "match__team_b",
+        "submission",
+        "score_correction_audit",
+    )
+    readonly_fields = (
+        "event_type",
+        "dedupe_key",
+        "actor",
+        "membership",
+        "match",
+        "submission",
+        "score_correction_audit",
+        "previous_state",
+        "new_state",
+        "metadata",
+        "created_at",
+    )
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class WorkflowEventRecipientAdmin(admin.ModelAdmin):
+    list_display = ("event", "user", "created_at")
+    list_select_related = ("event", "user")
+    readonly_fields = ("event", "user", "created_at")
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
 admin.site.register(Team, TeamAdmin)
 admin.site.register(TeamMembership, TeamMembershipAdmin)
@@ -356,3 +411,5 @@ admin.site.register(ConfirmedMatchResult, ConfirmedMatchResultAdmin)
 admin.site.register(PointLedger, PointLedgerAdmin)
 admin.site.register(ScoreCorrectionAudit, ScoreCorrectionAuditAdmin)
 admin.site.register(AdminNotification, AdminNotificationAdmin)
+admin.site.register(WorkflowEvent, WorkflowEventAdmin)
+admin.site.register(WorkflowEventRecipient, WorkflowEventRecipientAdmin)

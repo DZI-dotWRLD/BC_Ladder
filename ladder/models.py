@@ -690,3 +690,82 @@ class AdminNotification(models.Model):
 
     def __str__(self):
         return f"Notification for {self.match}"
+
+
+class WorkflowEvent(models.Model):
+    class EventType(models.TextChoices):
+        JOIN_REQUEST_CREATED = "join_request_created", "Join request created"
+        JOIN_REQUEST_CANCELLED = "join_request_cancelled", "Join request cancelled"
+        JOIN_REQUEST_APPROVED = "join_request_approved", "Join request approved"
+        JOIN_REQUEST_REJECTED = "join_request_rejected", "Join request rejected"
+        MATCH_CONFIRMED = "match_confirmed", "Match confirmed"
+        MATCH_CANCELLED = "match_cancelled", "Match cancelled"
+        SCORE_SUBMITTED = "score_submitted", "Score submitted"
+        SCORE_CONFLICT_CREATED = "score_conflict_created", "Score conflict created"
+        SCORE_CONFLICT_RESOLVED = "score_conflict_resolved", "Score conflict resolved"
+
+    event_type = models.CharField(max_length=40, choices=EventType.choices)
+    dedupe_key = models.CharField(max_length=160, unique=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events_as_actor",
+    )
+    membership = models.ForeignKey(
+        TeamMembership,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    submission = models.ForeignKey(
+        MatchResultSubmission,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    score_correction_audit = models.ForeignKey(
+        ScoreCorrectionAudit,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    previous_state = models.CharField(max_length=40, blank=True)
+    new_state = models.CharField(max_length=40, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [models.Index(fields=["event_type", "created_at"], name="workflow_type_created_idx")]
+
+    def __str__(self):
+        return f"{self.get_event_type_display()} at {self.created_at}"
+
+
+class WorkflowEventRecipient(models.Model):
+    event = models.ForeignKey(WorkflowEvent, on_delete=models.CASCADE, related_name="recipients")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="workflow_event_recipients",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["event", "user"], name="unique_workflow_event_recipient")]
+        indexes = [models.Index(fields=["user", "created_at"], name="workflow_recipient_created_idx")]
+
+    def __str__(self):
+        return f"{self.user} receives {self.event}"
