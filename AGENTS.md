@@ -244,6 +244,20 @@ Use the repo-local skill whose description matches the task:
 
 Use multiple skills when a task crosses concerns.
 
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repo uses the default five-label triage vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context Django repo: use root `CONTEXT.md` and root `docs/adr/` when they exist. See `docs/agents/domain.md`.
+
 ## Completion Report
 
 Finish substantive tasks with:

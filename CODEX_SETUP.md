@@ -9,6 +9,7 @@ virtual environment used during remediation.
 py -3.14 -m venv venv
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
 .\venv\Scripts\python.exe manage.py migrate
 .\venv\Scripts\python.exe manage.py test
 .\venv\Scripts\python.exe manage.py check
@@ -23,6 +24,18 @@ Optional development quality tools:
 .\venv\Scripts\python.exe -m ruff check .
 .\venv\Scripts\python.exe -m ruff format --check .
 .\venv\Scripts\python.exe -m pip_audit -r requirements.txt
+```
+
+The repo also includes a PowerShell wrapper for the standard local quality gate:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1
+```
+
+Use this faster variant while iterating on non-behavioral changes:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1 -SkipFullTests -SkipAudit
 ```
 
 ## Development Settings

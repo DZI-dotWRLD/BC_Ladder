@@ -13,6 +13,7 @@ From PowerShell:
 py -3.14 -m venv venv
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
 .\venv\Scripts\python.exe manage.py migrate
 .\venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
 ```
@@ -76,6 +77,18 @@ Optional local quality tooling:
 .\venv\Scripts\python.exe -m ruff check .
 .\venv\Scripts\python.exe -m ruff format --check .
 .\venv\Scripts\python.exe -m pip_audit -r requirements.txt
+```
+
+Run the standard local quality harness:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1
+```
+
+For a faster local pre-commit pass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1 -SkipFullTests -SkipAudit
 ```
 
 GitHub Actions runs tests, Django checks, migration consistency checks, Ruff,
