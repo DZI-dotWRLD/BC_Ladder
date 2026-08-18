@@ -1527,8 +1527,9 @@ class PhaseARequestTests(TestCase):
     def test_suggestion_create_and_dual_acceptance_flow(self):
         team_a, team_a_players = self.create_team_with_members("phase-a", 2)
         team_b, team_b_players = self.create_team_with_members("phase-b", 2)
-        starts_at = self.make_dt(2026, 8, 15, 18)
-        ends_at = self.make_dt(2026, 8, 15, 20)
+        starts_at = timezone.now() + timedelta(days=7)
+        starts_at = starts_at.replace(hour=18, minute=0, second=0, microsecond=0)
+        ends_at = starts_at + timedelta(hours=2)
         for player in team_a_players + team_b_players:
             save_availability(player.user, starts_at, ends_at)
 
