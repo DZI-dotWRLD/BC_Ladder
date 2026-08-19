@@ -9,10 +9,18 @@
         {% if team %}
             <h2>{{ team.name }}</h2>
             <p>{{ team.get_division_display }} doubles</p>
+            <p><span class="status-pill">{{ member_count }}/{{ team_capacity }} members</span></p>
+            {% if team_is_full %}
+                <p class="muted">This team is full. New join requests will be blocked.</p>
+            {% endif %}
             <h3>Members</h3>
-            {% for member in members %}
-                <p>{{ member.user.username }}</p>
-            {% endfor %}
+            <div class="member-list">
+                {% for member in members %}
+                    <p>{{ member.user.username }}</p>
+                {% empty %}
+                    <p class="muted">No active members found.</p>
+                {% endfor %}
+            </div>
             {% if membership and not membership.removal_requested_at %}
                 <form method="post" action="{% url 'ladder:request_team_removal' %}">
                     {% csrf_token %}
@@ -24,17 +32,43 @@
             {% endif %}
         {% else %}
             <h2>No active team</h2>
-            <p class="muted">Choose a team in your division.</p>
+            {% if pending_join_request %}
+                <p class="muted">Your request to join {{ pending_join_request.team.name }} is pending admin review.</p>
+                <form method="post" action="{% url 'ladder:cancel_join_request' %}">
+                    {% csrf_token %}
+                    <button class="secondary" type="submit">Cancel join request</button>
+                </form>
+            {% else %}
+                <p class="muted">Create a team or request to join an existing team in your division.</p>
+            {% endif %}
         {% endif %}
     </section>
     {% if not team %}
         <section class="panel">
             <div class="eyebrow">Membership</div>
-            <h2>Join Team</h2>
-            <form method="post" action="{% url 'ladder:join_team' %}">
+            <h2>Request to Join Team</h2>
+            {% if pending_join_request %}
+                <p class="muted">An administrator must approve or reject your current request before you can request another team.</p>
+                <form method="post" action="{% url 'ladder:cancel_join_request' %}">
+                    {% csrf_token %}
+                    <button class="secondary" type="submit">Cancel request</button>
+                </form>
+            {% else %}
+                <form method="post" action="{% url 'ladder:join_team' %}">
+                    {% csrf_token %}
+                    {{ join_form.as_p }}
+                    <button type="submit">Request to join</button>
+                </form>
+            {% endif %}
+        </section>
+        <section class="panel">
+            <div class="eyebrow">New team</div>
+            <h2>Create Team</h2>
+            <p class="muted">Create a team in your own ladder. You will become the first active member.</p>
+            <form method="post" action="{% url 'ladder:create_team' %}">
                 {% csrf_token %}
-                {{ join_form.as_p }}
-                <button type="submit">Join team</button>
+                {{ create_form.as_p }}
+                <button type="submit">Create team</button>
             </form>
         </section>
     {% endif %}

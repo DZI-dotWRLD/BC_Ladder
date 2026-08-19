@@ -22,6 +22,8 @@ from .models import (
     SuggestionParticipant,
     Team,
     TeamMembership,
+    WorkflowEvent,
+    WorkflowEventRecipient,
 )
 
 
@@ -42,11 +44,49 @@ class PlayerProfileAdmin(admin.ModelAdmin):
 
 
 class TeamMembershipAdmin(admin.ModelAdmin):
-    list_display = ("player", "team", "status", "removal_requested_at", "reviewed_by", "resolved_at")
+    list_display = (
+        "player",
+        "team",
+        "status",
+        "is_pending_join_request",
+        "is_pending_removal_request",
+        "reviewed_by",
+        "resolved_at",
+    )
     list_filter = ("status", "team__division", "removal_requested_at")
     list_select_related = ("player__user", "team", "reviewed_by")
     readonly_fields = ("created_at", "updated_at", "effective_from", "effective_to", "reviewed_by", "resolved_at")
-    actions = ("approve_removal_requests", "reject_removal_requests")
+    actions = ("approve_join_requests", "reject_join_requests", "approve_removal_requests", "reject_removal_requests")
+
+    @admin.display(boolean=True, description="Join pending")
+    def is_pending_join_request(self, obj):
+        return obj.status == TeamMembership.STATUS_JOIN_REQUESTED
+
+    @admin.display(boolean=True, description="Removal pending")
+    def is_pending_removal_request(self, obj):
+        return obj.removal_requested_at is not None and obj.status == TeamMembership.STATUS_ACTIVE
+
+    @admin.action(description="Approve selected join requests")
+    def approve_join_requests(self, request, queryset):
+        completed = 0
+        for membership in queryset.filter(status=TeamMembership.STATUS_JOIN_REQUESTED):
+            try:
+                resolve_membership_request(request.user, membership, "approve")
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Approved {completed} join request(s).")
+
+    @admin.action(description="Reject selected join requests")
+    def reject_join_requests(self, request, queryset):
+        completed = 0
+        for membership in queryset.filter(status=TeamMembership.STATUS_JOIN_REQUESTED):
+            try:
+                resolve_membership_request(request.user, membership, "reject")
+                completed += 1
+            except DomainError as error:
+                self.message_user(request, str(error), level=messages.ERROR)
+        self.message_user(request, f"Rejected {completed} join request(s).")
 
     @admin.action(description="Approve selected removal requests")
     def approve_removal_requests(self, request, queryset):
@@ -147,6 +187,7 @@ class MatchAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 class MatchResultSubmissionAdmin(admin.ModelAdmin):
     list_display = (
@@ -299,6 +340,57 @@ class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
         return False
 
 
+class WorkflowEventAdmin(admin.ModelAdmin):
+    list_display = ("event_type", "actor", "membership", "match", "submission", "created_at")
+    list_filter = ("event_type", "created_at")
+    list_select_related = (
+        "actor",
+        "membership__player__user",
+        "membership__team",
+        "match__team_a",
+        "match__team_b",
+        "submission",
+        "score_correction_audit",
+    )
+    readonly_fields = (
+        "event_type",
+        "dedupe_key",
+        "actor",
+        "membership",
+        "match",
+        "submission",
+        "score_correction_audit",
+        "previous_state",
+        "new_state",
+        "metadata",
+        "created_at",
+    )
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class WorkflowEventRecipientAdmin(admin.ModelAdmin):
+    list_display = ("event", "user", "created_at")
+    list_select_related = ("event", "user")
+    readonly_fields = ("event", "user", "created_at")
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
@@ -319,3 +411,5 @@ admin.site.register(ConfirmedMatchResult, ConfirmedMatchResultAdmin)
 admin.site.register(PointLedger, PointLedgerAdmin)
 admin.site.register(ScoreCorrectionAudit, ScoreCorrectionAuditAdmin)
 admin.site.register(AdminNotification, AdminNotificationAdmin)
+admin.site.register(WorkflowEvent, WorkflowEventAdmin)
+admin.site.register(WorkflowEventRecipient, WorkflowEventRecipientAdmin)

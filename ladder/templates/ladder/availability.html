@@ -14,11 +14,13 @@
         </form>
     </section>
     <section class="panel">
-        <h2>Your Windows</h2>
+        <h2>Active Windows</h2>
+        {% if cancelled_count %}
+            <p class="muted">{{ cancelled_count }} cancelled window(s) are hidden from this player view and preserved for admin history.</p>
+        {% endif %}
         {% for slot in slots %}
             <div class="item">
                 <p>{{ slot.starts_at|date:"M j, Y g:i A" }} to {{ slot.ends_at|date:"g:i A" }}</p>
-                <p><span class="status-pill">{{ slot.get_status_display }}</span></p>
                 {% if slot.status == "active" %}
                     <form method="post" action="{% url 'ladder:cancel_availability' slot.id %}">
                         {% csrf_token %}
@@ -28,7 +30,7 @@
                 {% endif %}
             </div>
         {% empty %}
-            <div class="empty-state"><p class="muted">No availability entered.</p></div>
+            <div class="empty-state"><p class="muted">No active availability entered.</p></div>
         {% endfor %}
     </section>
 </div>

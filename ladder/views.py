@@ -6,29 +6,29 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 from django.utils import timezone
 
-from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamJoinForm
+from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamCreateForm, TeamJoinForm
 from .models import (
     AvailabilitySlot,
     LadderStanding,
     Match,
     MatchSuggestion,
     PlayerProfile,
+    SuggestionParticipant,
     Team,
     TeamMembership,
 )
 from .services import (
-    AuthorizationFailure,
-    BookingCollision,
     DomainError,
-    InvalidInput,
-    StaleState,
     accept_suggestion,
     cancel_availability,
+    cancel_join_request,
+    cancel_match,
     create_match_suggestion,
+    create_team_for_player,
     find_opponent_suggestions,
+    generate_team_lineups,
     get_match_status,
     request_membership_change,
     save_availability,
@@ -37,11 +37,7 @@ from .services import (
 
 
 def _profile_for_request(request):
-    profile = (
-        PlayerProfile.objects.select_related("user", "team")
-        .filter(user=request.user)
-        .first()
-    )
+    profile = PlayerProfile.objects.select_related("user", "team").filter(user=request.user).first()
     if profile is None:
         raise PlayerProfile.DoesNotExist
     return profile
@@ -56,11 +52,7 @@ def _profile_or_setup(request):
 
 
 def _active_membership(profile):
-    return (
-        TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_ACTIVE)
-        .select_related("team")
-        .first()
-    )
+    return TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_ACTIVE).select_related("team").first()
 
 
 def _active_team(profile):
@@ -74,14 +66,192 @@ def _message_domain_error(request, error):
 
 def _player_match_queryset(profile):
     team = _active_team(profile)
-    if not team:
-        return Match.objects.none()
+    ownership_filter = Q(participants__player=profile)
+    if team:
+        ownership_filter |= Q(team_a=team) | Q(team_b=team)
     return (
-        Match.objects.filter(Q(team_a=team) | Q(team_b=team))
+        Match.objects.filter(ownership_filter)
         .select_related("team_a", "team_b")
         .prefetch_related("participants__player__user", "result_submissions__sets")
+        .distinct()
         .order_by("-scheduled_starts_at", "-scheduled_week_start_date", "-scheduled_start_time")
     )
+
+
+def _participant_match_queryset(profile):
+    return (
+        Match.objects.filter(participants__player=profile)
+        .select_related("team_a", "team_b")
+        .prefetch_related("participants__player__user", "result_submissions__sets")
+        .distinct()
+    )
+
+
+def _setup_steps_for_profile(profile, team, active_availability_count, suggestion_count, match_count):
+    pending_join_request = (
+        None
+        if team
+        else TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_JOIN_REQUESTED)
+        .select_related("team")
+        .order_by("created_at", "id")
+        .first()
+    )
+    team_label = "Team selected"
+    team_detail_text = team.name if team else "Create a team or request to join one."
+    if pending_join_request:
+        team_label = "Team request pending"
+        team_detail_text = f"Waiting for admin approval to join {pending_join_request.team.name}."
+
+    return [
+        {
+            "label": "Player profile",
+            "detail": "Profile complete.",
+            "complete": True,
+            "url_name": "ladder:profile_setup",
+        },
+        {
+            "label": team_label,
+            "detail": team_detail_text,
+            "complete": bool(team),
+            "url_name": "ladder:team",
+        },
+        {
+            "label": "Availability",
+            "detail": "Add at least one active window."
+            if not active_availability_count
+            else f"{active_availability_count} active window(s).",
+            "complete": active_availability_count > 0,
+            "url_name": "ladder:availability",
+        },
+        {
+            "label": "Suggestions",
+            "detail": "Review compatible opponents once your team has shared availability."
+            if not suggestion_count
+            else f"{suggestion_count} suggestion(s) available.",
+            "complete": suggestion_count > 0,
+            "url_name": "ladder:suggestions",
+        },
+        {
+            "label": "Matches",
+            "detail": "Confirmed matches will appear here." if not match_count else f"{match_count} match(es) scheduled or completed.",
+            "complete": match_count > 0,
+            "url_name": "ladder:matches",
+        },
+    ]
+
+
+def _active_member_count(team):
+    membership_count = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count()
+    legacy_count = team.players.count()
+    return max(membership_count, legacy_count)
+
+
+def _suggestion_empty_state(profile, team, interval, options):
+    if not team:
+        return {
+            "title": "Join or create a team first",
+            "detail": "Suggestions require an active team in your ladder.",
+            "url_name": "ladder:team",
+            "action": "Go to team",
+        }
+
+    if _active_member_count(team) < 2:
+        return {
+            "title": "Your team needs two active members",
+            "detail": "A doubles match needs exactly two active players from your team.",
+            "url_name": "ladder:team",
+            "action": "Manage team",
+        }
+
+    if not AvailabilitySlot.objects.filter(
+        player__team_memberships__team=team,
+        player__team_memberships__status=TeamMembership.STATUS_ACTIVE,
+        status=AvailabilitySlot.STATUS_ACTIVE,
+        starts_at__lt=interval[1],
+        ends_at__gt=interval[0],
+    ).exists():
+        return {
+            "title": "Add active availability",
+            "detail": "At least two teammates need overlapping active availability before opponents can be suggested.",
+            "url_name": "ladder:availability",
+            "action": "Add availability",
+        }
+
+    if not generate_team_lineups(team, interval):
+        return {
+            "title": "No shared team availability",
+            "detail": "Your team has availability, but no two active members currently overlap in the next 30 days.",
+            "url_name": "ladder:availability",
+            "action": "Adjust availability",
+        }
+
+    if not Team.active.filter(division=team.division).exclude(pk=team.pk).exists():
+        return {
+            "title": "No opponent teams in this ladder yet",
+            "detail": "Suggestions require another active team in the same ladder.",
+            "url_name": "ladder:ladder",
+            "url_args": [team.division],
+            "action": "View ladder",
+        }
+
+    if not options:
+        return {
+            "title": "No overlapping opponent availability",
+            "detail": "Your team is ready, but no eligible opponent lineup has a compatible active window right now.",
+            "url_name": "ladder:availability",
+            "action": "Review availability",
+        }
+    return None
+
+
+def _lineup_label(players):
+    return " / ".join(player.user.username for player in players)
+
+
+def _suggestion_cards(suggestions, profile, team):
+    cards = []
+    open_statuses = {MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED}
+    for suggestion in suggestions:
+        participants = list(suggestion.participants.all())
+        players_by_side = {
+            SuggestionParticipant.SIDE_A: [],
+            SuggestionParticipant.SIDE_B: [],
+        }
+        for participant in sorted(participants, key=lambda item: (item.side, item.lineup_order, item.player_id)):
+            players_by_side[participant.side].append(participant.player)
+
+        accepted_team_ids = {acceptance.team_id for acceptance in suggestion.acceptances.all()}
+        own_team_accepted = team.id in accepted_team_ids
+        required_team_ids = {suggestion.team_a_id, suggestion.team_b_id}
+        is_selected_player = profile.id in {participant.player_id for participant in participants}
+        is_open = suggestion.status in open_statuses
+        can_accept = is_open and is_selected_player and not own_team_accepted
+
+        if suggestion.status == MatchSuggestion.STATUS_CONFIRMED:
+            state_note = "Match confirmed."
+        elif suggestion.status in {MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED, MatchSuggestion.STATUS_EXPIRED}:
+            state_note = f"This suggestion is {suggestion.get_status_display().lower()}."
+        elif accepted_team_ids == required_team_ids:
+            state_note = "Both teams accepted; confirmation is in progress."
+        elif own_team_accepted:
+            state_note = "Your team accepted. Waiting for the opponent."
+        elif accepted_team_ids:
+            state_note = "Opponent accepted. Your selected lineup can accept."
+        else:
+            state_note = "Waiting for both teams to accept."
+
+        cards.append(
+            {
+                "suggestion": suggestion,
+                "team_a_lineup": _lineup_label(players_by_side[SuggestionParticipant.SIDE_A]),
+                "team_b_lineup": _lineup_label(players_by_side[SuggestionParticipant.SIDE_B]),
+                "can_accept": can_accept,
+                "is_open": is_open,
+                "state_note": state_note,
+                "is_selected_player": is_selected_player,
+            }
+        )
+    return cards
 
 
 def register(request):
@@ -118,9 +288,11 @@ def dashboard(request):
     if profile is None:
         return redirect("ladder:profile_setup")
     team = _active_team(profile)
-    availability = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE).order_by("starts_at")[:5]
+    active_availability = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE)
+    availability = active_availability.order_by("starts_at")[:5]
     suggestions_qs = MatchSuggestion.objects.none()
-    matches = _player_match_queryset(profile)[:5]
+    matches_qs = _player_match_queryset(profile)
+    matches = matches_qs[:5]
     if team:
         suggestions_qs = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
@@ -128,10 +300,24 @@ def dashboard(request):
             .prefetch_related("participants__player__user", "acceptances")
             .order_by("starts_at")[:5]
         )
+    setup_steps = _setup_steps_for_profile(
+        profile,
+        team,
+        active_availability.count(),
+        suggestions_qs.count(),
+        matches_qs.count(),
+    )
     return render(
         request,
         "ladder/dashboard.html",
-        {"profile": profile, "team": team, "availability": availability, "suggestions": suggestions_qs, "matches": matches},
+        {
+            "profile": profile,
+            "team": team,
+            "availability": availability,
+            "suggestions": suggestions_qs,
+            "matches": matches,
+            "setup_steps": setup_steps,
+        },
     )
 
 
@@ -143,14 +329,59 @@ def team_detail(request):
     membership = _active_membership(profile)
     team = membership.team if membership else profile.team
     members = []
+    member_count = 0
+    team_capacity = 3
+    team_is_full = False
+    pending_join_request = None
     if team:
         member_ids = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).values_list("player_id", flat=True)
-        members = PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
+        members = (
+            PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
+        )
+        member_count = len(members)
+        team_is_full = member_count >= team_capacity
+    else:
+        pending_join_request = (
+            TeamMembership.objects.filter(player=profile, status=TeamMembership.STATUS_JOIN_REQUESTED)
+            .select_related("team")
+            .order_by("created_at", "id")
+            .first()
+        )
     return render(
         request,
         "ladder/team.html",
-        {"profile": profile, "team": team, "members": members, "membership": membership, "join_form": TeamJoinForm(profile=profile)},
+        {
+            "profile": profile,
+            "team": team,
+            "members": members,
+            "member_count": member_count,
+            "team_capacity": team_capacity,
+            "team_is_full": team_is_full,
+            "membership": membership,
+            "pending_join_request": pending_join_request,
+            "join_form": TeamJoinForm(profile=profile),
+            "create_form": TeamCreateForm(),
+        },
     )
+
+
+@login_required
+def create_team(request):
+    if request.method != "POST":
+        return redirect("ladder:team")
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    form = TeamCreateForm(request.POST)
+    if form.is_valid():
+        try:
+            team, _membership = create_team_for_player(request.user, profile, form.cleaned_data["name"])
+            messages.success(request, f"Team {team.name} created.")
+        except DomainError as error:
+            _message_domain_error(request, error)
+    else:
+        messages.error(request, "Enter a valid, unique team name.")
+    return redirect("ladder:team")
 
 
 @login_required
@@ -163,12 +394,27 @@ def join_team(request):
     form = TeamJoinForm(request.POST, profile=profile)
     if form.is_valid():
         try:
-            request_membership_change(request.user, profile, form.cleaned_data["team"], "join")
-            messages.success(request, "Team membership updated.")
+            request_membership_change(request.user, profile, form.cleaned_data["team"], "request_join")
+            messages.success(request, "Team join request sent to the administrators.")
         except DomainError as error:
             _message_domain_error(request, error)
     else:
         messages.error(request, "Choose a valid team.")
+    return redirect("ladder:team")
+
+
+@login_required
+def cancel_join_request_view(request):
+    if request.method != "POST":
+        return redirect("ladder:team")
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    try:
+        cancel_join_request(request.user, profile)
+        messages.success(request, "Team join request cancelled.")
+    except DomainError as error:
+        _message_domain_error(request, error)
     return redirect("ladder:team")
 
 
@@ -203,8 +449,9 @@ def availability(request):
                 _message_domain_error(request, error)
         else:
             messages.error(request, "Enter a valid start and end.")
-    slots = profile.availability_slots.order_by("-starts_at", "-created_at")
-    return render(request, "ladder/availability.html", {"form": form, "slots": slots})
+    slots = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE).order_by("starts_at", "created_at")
+    cancelled_count = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_CANCELLED).count()
+    return render(request, "ladder/availability.html", {"form": form, "slots": slots, "cancelled_count": cancelled_count})
 
 
 @login_required
@@ -231,17 +478,26 @@ def suggestions(request):
     team = _active_team(profile)
     options = []
     existing = MatchSuggestion.objects.none()
+    existing_cards = []
+    empty_state = None
+    starts_at = timezone.now()
+    ends_at = starts_at + timedelta(days=30)
+    interval = (starts_at, ends_at)
     if team:
-        starts_at = timezone.now()
-        ends_at = starts_at + timedelta(days=30)
-        options = find_opponent_suggestions(team, (starts_at, ends_at))[:10]
+        options = find_opponent_suggestions(team, interval)[:10]
         existing = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
             .select_related("team_a", "team_b")
             .prefetch_related("participants__player__user", "acceptances")
             .order_by("starts_at", "id")
         )
-    return render(request, "ladder/suggestions.html", {"team": team, "options": options, "existing": existing})
+        existing_cards = _suggestion_cards(existing, profile, team)
+    empty_state = _suggestion_empty_state(profile, team, interval, options)
+    return render(
+        request,
+        "ladder/suggestions.html",
+        {"team": team, "options": options, "existing_cards": existing_cards, "empty_state": empty_state},
+    )
 
 
 @login_required
@@ -303,11 +559,40 @@ def match_detail(request, match_id):
     if profile is None:
         return redirect("ladder:profile_setup")
     match = get_object_or_404(_player_match_queryset(profile), pk=match_id)
+    is_selected_participant = profile.id in {participant.player_id for participant in match.participants.all()}
+    can_cancel = is_selected_participant and match.status == Match.STATUS_SCHEDULED and not match.result_submissions.all()
     return render(
         request,
         "ladder/match_detail.html",
-        {"match": match, "status": get_match_status(match), "score_form": ScoreSubmissionForm()},
+        {
+            "match": match,
+            "status": get_match_status(match),
+            "score_form": ScoreSubmissionForm(),
+            "is_selected_participant": is_selected_participant,
+            "can_cancel": can_cancel,
+        },
     )
+
+
+@login_required
+def cancel_match_view(request, match_id):
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    match = get_object_or_404(_participant_match_queryset(profile), pk=match_id)
+    if request.method == "GET":
+        if match.status != Match.STATUS_SCHEDULED or match.result_submissions.all():
+            messages.error(request, "This match can no longer be cancelled.")
+            return redirect("ladder:match_detail", match_id=match.id)
+        return render(request, "ladder/match_cancel_confirm.html", {"match": match})
+    if request.method != "POST":
+        return redirect("ladder:match_detail", match_id=match.id)
+    try:
+        cancel_match(request.user, match)
+        messages.success(request, "Match cancelled. All four players are no longer reserved for this time.")
+    except DomainError as error:
+        _message_domain_error(request, error)
+    return redirect("ladder:match_detail", match_id=match.id)
 
 
 @login_required

@@ -1,0 +1,12 @@
+[tool.ruff]
+target-version = "py314"
+line-length = 140
+
+[tool.ruff.lint]
+select = ["F"]
+
+[tool.ruff.format]
+exclude = ["ladder/migrations/*.py"]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

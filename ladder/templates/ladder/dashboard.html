@@ -4,6 +4,25 @@
 
 {% block content %}
 <h1>Dashboard</h1>
+<section class="panel setup-panel">
+    <div class="eyebrow">Manual setup</div>
+    <h2>Start here</h2>
+    <p class="muted">Work through these steps to get from a new account to playable matches.</p>
+    <ol class="setup-list">
+        {% for step in setup_steps %}
+            <li class="{% if step.complete %}complete{% endif %}">
+                <span class="setup-marker">{% if step.complete %}✓{% else %}{{ forloop.counter }}{% endif %}</span>
+                <span>
+                    <strong>{{ step.label }}</strong>
+                    <span class="muted">{{ step.detail }}</span>
+                </span>
+                {% if not step.complete %}
+                    <a class="button secondary" href="{% url step.url_name %}">Open</a>
+                {% endif %}
+            </li>
+        {% endfor %}
+    </ol>
+</section>
 <div class="grid">
     <section class="panel">
         <div class="eyebrow">Membership</div>

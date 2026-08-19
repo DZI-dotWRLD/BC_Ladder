@@ -35,7 +35,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         with transaction.atomic():
-            admin_user = self._user("demo-admin", is_staff=True, is_superuser=True)
+            self._user("demo-admin", is_staff=True, is_superuser=True)
             mens_players = self._players("mens", PlayerProfile.GENDER_MALE, 8)
             womens_players = self._players("womens", PlayerProfile.GENDER_FEMALE, 8)
             mens_teams = self._teams("Men", Team.DIVISION_MENS, mens_players)
@@ -119,10 +119,7 @@ class Command(BaseCommand):
             )
 
     def _refresh_standings(self, teams):
-        stats = {
-            team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0}
-            for team in teams
-        }
+        stats = {team.id: {"matches_played": 0, "wins": 0, "losses": 0, "points": 0} for team in teams}
         completed_results = ConfirmedMatchResult.objects.filter(
             winning_team__in=teams,
             losing_team__in=teams,

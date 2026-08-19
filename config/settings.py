@@ -13,6 +13,9 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -20,85 +23,111 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
+
 def env_bool(name, default=False):
     return os.environ.get(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
 
 def env_list(name, default=""):
-    value = os.environ.get(name, default)
+    return csv_list(os.environ.get(name, default))
+
+
+def csv_list(value):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def build_allowed_hosts(explicit_hosts=None, render_external_hostname=""):
+    default_hosts = render_external_hostname or "localhost,127.0.0.1"
+    hosts = csv_list(explicit_hosts if explicit_hosts is not None else default_hosts)
+    if render_external_hostname and explicit_hosts and "*" not in hosts and render_external_hostname not in hosts:
+        hosts.append(render_external_hostname)
+    return hosts
+
+
+def build_database_config(database_url=None, manual_env=None):
+    env = os.environ if manual_env is None else manual_env
+    if database_url:
+        return {
+            "default": dj_database_url.parse(
+                database_url,
+                conn_max_age=600,
+                conn_health_checks=True,
+            )
+        }
+    return {
+        "default": {
+            "ENGINE": env.get("DJANGO_DB_ENGINE", "django.db.backends.sqlite3"),
+            "NAME": env.get("DJANGO_DB_NAME", BASE_DIR / "db.sqlite3"),
+            "USER": env.get("DJANGO_DB_USER", ""),
+            "PASSWORD": env.get("DJANGO_DB_PASSWORD", ""),
+            "HOST": env.get("DJANGO_DB_HOST", ""),
+            "PORT": env.get("DJANGO_DB_PORT", ""),
+        }
+    }
+
+
+DEVELOPMENT_SECRET_KEY = "bc-ladder-development-only-secret-key"
+
 # Development fallback only. Set DJANGO_SECRET_KEY in every deployed environment.
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "bc-ladder-development-only-secret-key")
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEVELOPMENT_SECRET_KEY)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool("DJANGO_DEBUG", True)
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = build_allowed_hosts(
+    explicit_hosts=os.environ.get("DJANGO_ALLOWED_HOSTS"),
+    render_external_hostname=os.environ.get("RENDER_EXTERNAL_HOSTNAME", ""),
+)
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'ladder',
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
+    "ladder",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'config.wsgi.application'
+WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-if os.environ.get("DATABASE_URL"):
-    raise RuntimeError(
-        "DATABASE_URL parsing is not configured. Set DJANGO_DB_ENGINE, DJANGO_DB_NAME, "
-        "DJANGO_DB_USER, DJANGO_DB_PASSWORD, DJANGO_DB_HOST, and DJANGO_DB_PORT instead."
-    )
-
-DATABASES = {
-    "default": {
-        "ENGINE": os.environ.get("DJANGO_DB_ENGINE", "django.db.backends.sqlite3"),
-        "NAME": os.environ.get("DJANGO_DB_NAME", BASE_DIR / "db.sqlite3"),
-        "USER": os.environ.get("DJANGO_DB_USER", ""),
-        "PASSWORD": os.environ.get("DJANGO_DB_PASSWORD", ""),
-        "HOST": os.environ.get("DJANGO_DB_HOST", ""),
-        "PORT": os.environ.get("DJANGO_DB_PORT", ""),
-    }
-}
+DATABASES = build_database_config(os.environ.get("DATABASE_URL"))
 
 
 # Password validation
@@ -106,16 +135,16 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -123,7 +152,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "America/New_York")
 
@@ -135,7 +164,22 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+WHITENOISE_MANIFEST_STRICT = env_bool("DJANGO_WHITENOISE_MANIFEST_STRICT", not DEBUG)
+STATICFILES_STORAGE_BACKEND = (
+    "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    if WHITENOISE_MANIFEST_STRICT
+    else "django.contrib.staticfiles.storage.StaticFilesStorage"
+)
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": STATICFILES_STORAGE_BACKEND,
+    },
+}
 
 LOGIN_URL = "ladder:login"
 LOGIN_REDIRECT_URL = "ladder:dashboard"
@@ -154,3 +198,132 @@ SECURE_PROXY_SSL_HEADER = (
 SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
 SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
+SECURE_REFERRER_POLICY = os.environ.get("DJANGO_SECURE_REFERRER_POLICY", "same-origin")
+LOG_LEVEL = os.environ.get("DJANGO_LOG_LEVEL", "INFO")
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "console": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "console",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        "django.security": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
+
+
+def validate_production_settings():
+    errors = production_settings_errors(
+        debug=DEBUG,
+        secret_key=SECRET_KEY,
+        secret_key_was_set=bool(os.environ.get("DJANGO_SECRET_KEY")),
+        allowed_hosts=ALLOWED_HOSTS,
+        csrf_trusted_origins=CSRF_TRUSTED_ORIGINS,
+        session_cookie_secure=SESSION_COOKIE_SECURE,
+        csrf_cookie_secure=CSRF_COOKIE_SECURE,
+        secure_ssl_redirect=SECURE_SSL_REDIRECT,
+        proxy_ssl_header_name=SECURE_PROXY_SSL_HEADER_NAME,
+        proxy_ssl_header_value=SECURE_PROXY_SSL_HEADER_VALUE,
+        hsts_seconds=SECURE_HSTS_SECONDS,
+        hsts_include_subdomains=SECURE_HSTS_INCLUDE_SUBDOMAINS,
+        hsts_preload=SECURE_HSTS_PRELOAD,
+        database=DATABASES["default"],
+        whitenoise_manifest_strict=WHITENOISE_MANIFEST_STRICT,
+    )
+
+    if errors:
+        raise ImproperlyConfigured("Unsafe production settings: " + " ".join(errors))
+
+
+def production_settings_errors(
+    *,
+    debug,
+    secret_key,
+    secret_key_was_set,
+    allowed_hosts,
+    csrf_trusted_origins,
+    session_cookie_secure,
+    csrf_cookie_secure,
+    secure_ssl_redirect,
+    proxy_ssl_header_name,
+    proxy_ssl_header_value,
+    hsts_seconds,
+    hsts_include_subdomains,
+    hsts_preload,
+    database,
+    whitenoise_manifest_strict,
+):
+    if debug:
+        return []
+
+    errors = []
+    if (
+        not secret_key_was_set
+        or secret_key == DEVELOPMENT_SECRET_KEY
+        or secret_key.startswith("django-insecure-")
+        or len(secret_key) < 32
+        or len(set(secret_key)) < 5
+    ):
+        errors.append("DJANGO_SECRET_KEY must be set to a rotated secret of at least 32 characters with at least 5 unique characters.")
+    if not allowed_hosts:
+        errors.append("DJANGO_ALLOWED_HOSTS must list the deployed hostnames.")
+    if "*" in allowed_hosts:
+        errors.append("DJANGO_ALLOWED_HOSTS must not contain '*' in production.")
+    if any(host in {"localhost", "127.0.0.1", "[::1]"} for host in allowed_hosts):
+        errors.append("DJANGO_ALLOWED_HOSTS must not contain local development hosts in production.")
+    for origin in csrf_trusted_origins:
+        if not origin.startswith("https://"):
+            errors.append("DJANGO_CSRF_TRUSTED_ORIGINS entries must use https:// in production.")
+        if "*" in origin:
+            errors.append("DJANGO_CSRF_TRUSTED_ORIGINS must not contain wildcards in production.")
+        if any(local_host in origin for local_host in ("localhost", "127.0.0.1", "[::1]")):
+            errors.append("DJANGO_CSRF_TRUSTED_ORIGINS must not contain local development origins in production.")
+    if not session_cookie_secure:
+        errors.append("DJANGO_SESSION_COOKIE_SECURE must be true in production.")
+    if not csrf_cookie_secure:
+        errors.append("DJANGO_CSRF_COOKIE_SECURE must be true in production.")
+    if not secure_ssl_redirect:
+        errors.append("DJANGO_SECURE_SSL_REDIRECT must be true in production.")
+    if bool(proxy_ssl_header_name) != bool(proxy_ssl_header_value):
+        errors.append("Set both DJANGO_SECURE_PROXY_SSL_HEADER_NAME and DJANGO_SECURE_PROXY_SSL_HEADER_VALUE, or set neither.")
+    if hsts_preload and not hsts_include_subdomains:
+        errors.append("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=true.")
+    if hsts_preload and hsts_seconds < 31536000:
+        errors.append("DJANGO_SECURE_HSTS_PRELOAD requires DJANGO_SECURE_HSTS_SECONDS >= 31536000.")
+    if database.get("ENGINE") != "django.db.backends.postgresql":
+        errors.append("DJANGO_DB_ENGINE must be django.db.backends.postgresql in production.")
+    for key, env_name in (
+        ("NAME", "DJANGO_DB_NAME"),
+        ("USER", "DJANGO_DB_USER"),
+        ("PASSWORD", "DJANGO_DB_PASSWORD"),
+        ("HOST", "DJANGO_DB_HOST"),
+    ):
+        if not database.get(key):
+            errors.append(f"{env_name} must be set in production.")
+    if not whitenoise_manifest_strict:
+        errors.append("DJANGO_WHITENOISE_MANIFEST_STRICT must not be false in production.")
+    return errors
+
+
+validate_production_settings()

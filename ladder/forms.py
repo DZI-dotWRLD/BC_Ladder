@@ -24,17 +24,37 @@ class AvailabilityForm(forms.Form):
 
 
 class TeamJoinForm(forms.Form):
-    team = forms.ModelChoiceField(queryset=Team.active.none())
+    team = forms.ModelChoiceField(
+        queryset=Team.active.none(),
+        empty_label="Choose a team",
+        label="Team",
+    )
 
     def __init__(self, *args, profile=None, **kwargs):
         super().__init__(*args, **kwargs)
-        queryset = Team.active.order_by("division", "name")
+        queryset = Team.active.order_by("name", "id")
         if profile:
             if profile.gender == PlayerProfile.GENDER_MALE:
                 queryset = queryset.filter(division=Team.DIVISION_MENS)
             elif profile.gender == PlayerProfile.GENDER_FEMALE:
                 queryset = queryset.filter(division=Team.DIVISION_WOMENS)
         self.fields["team"].queryset = queryset
+
+
+class TeamCreateForm(forms.Form):
+    name = forms.CharField(
+        label="Team name",
+        max_length=50,
+        widget=forms.TextInput(attrs={"placeholder": "e.g. The Red Room"}),
+    )
+
+    def clean_name(self):
+        name = " ".join(self.cleaned_data["name"].split())
+        if not name:
+            raise forms.ValidationError("Team name is required.")
+        if Team.objects.filter(name__iexact=name).exists():
+            raise forms.ValidationError("A team with this name already exists.")
+        return name
 
 
 class ProfileSetupForm(forms.ModelForm):

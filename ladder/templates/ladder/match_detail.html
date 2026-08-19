@@ -14,7 +14,14 @@
         <p class="muted">No participant records for this legacy match.</p>
     {% endfor %}
 </section>
-{% if match.status == "scheduled" %}
+{% if can_cancel %}
+    <section class="panel">
+        <h2>Match operations</h2>
+        <p class="muted">Any selected participant may cancel before a score is submitted.</p>
+        <a class="button danger" href="{% url 'ladder:cancel_match' match.id %}">Cancel match</a>
+    </section>
+{% endif %}
+{% if match.status == "scheduled" and is_selected_participant %}
     <section class="panel">
         <h2>Submit Score</h2>
         <p class="muted">Enter two regular sets. Add the third set only when it is a deciding match tie-break.</p>

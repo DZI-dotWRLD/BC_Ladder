@@ -8,6 +8,7 @@ class ActiveTeamManager(models.Manager):
     def get_queryset(self):
         return super().get_queryset().filter(status=Team.STATUS_ACTIVE)
 
+
 class Team(models.Model):
     DIVISION_MENS = "mens"
     DIVISION_WOMENS = "womens"
@@ -33,10 +34,10 @@ class Team(models.Model):
 
     def __str__(self):
         return self.name
-    
 
 
 # Player profile class
+
 
 class PlayerProfile(models.Model):
     GENDER_MALE = "male"
@@ -63,7 +64,6 @@ class PlayerProfile(models.Model):
         related_name="players",
     )
 
-
     def clean(self):
         super().clean()
 
@@ -86,14 +86,8 @@ class PlayerProfile(models.Model):
 
     @property
     def active_team(self):
-        membership = (
-            self.team_memberships.filter(status=TeamMembership.STATUS_ACTIVE)
-            .select_related("team")
-            .first()
-        )
+        membership = self.team_memberships.filter(status=TeamMembership.STATUS_ACTIVE).select_related("team").first()
         return membership.team if membership else self.team
-
-
 
     def __str__(self):
         return f"{self.user.username} profile"
@@ -102,11 +96,13 @@ class PlayerProfile(models.Model):
 class TeamMembership(models.Model):
     STATUS_ACTIVE = "active"
     STATUS_INACTIVE = "inactive"
+    STATUS_JOIN_REQUESTED = "join_requested"
     STATUS_REMOVAL_REQUESTED = "removal_requested"
 
     STATUS_CHOICES = [
         (STATUS_ACTIVE, "Active"),
         (STATUS_INACTIVE, "Inactive"),
+        (STATUS_JOIN_REQUESTED, "Join requested"),
         (STATUS_REMOVAL_REQUESTED, "Removal requested"),
     ]
 
@@ -240,7 +236,10 @@ class AvailabilitySlot(models.Model):
                 name="unique_active_player_availability_interval",
             ),
             models.CheckConstraint(
-                condition=Q(starts_at__isnull=True) | Q(ends_at__isnull=True) | Q(starts_at__lt=F("ends_at")),
+                condition=(
+                    (Q(starts_at__isnull=True) & Q(ends_at__isnull=True))
+                    | (Q(starts_at__isnull=False) & Q(ends_at__isnull=False) & Q(starts_at__lt=F("ends_at")))
+                ),
                 name="availability_interval_valid",
             ),
         ]
@@ -254,15 +253,13 @@ class AvailabilitySlot(models.Model):
 
         if self.start_time >= self.end_time:
             raise ValidationError("Start time must be before end time.")
+        if bool(self.starts_at) != bool(self.ends_at):
+            raise ValidationError("Availability interval must include both start and end.")
         if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
             raise ValidationError("Availability start must be before end.")
 
     def __str__(self):
-        return (
-            f"{self.player.user.username} - "
-            f"{self.get_day_of_week_display()} "
-            f"{self.start_time}-{self.end_time}"
-        )
+        return f"{self.player.user.username} - {self.get_day_of_week_display()} {self.start_time}-{self.end_time}"
 
 
 class Challenge(models.Model):
@@ -410,20 +407,14 @@ class SuggestionAcceptance(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["suggestion", "team"], name="unique_suggestion_acceptance_per_team")
-        ]
+        constraints = [models.UniqueConstraint(fields=["suggestion", "team"], name="unique_suggestion_acceptance_per_team")]
         indexes = [models.Index(fields=["suggestion", "team"], name="suggestion_acceptance_idx")]
 
 
-
-
 class Match(models.Model):
-
     STATUS_SCHEDULED = "scheduled"
     STATUS_COMPLETED = "completed"
     STATUS_CANCELLED = "cancelled"
-    
 
     STATUS_CHOICES = [
         (STATUS_SCHEDULED, "Scheduled"),
@@ -431,19 +422,22 @@ class Match(models.Model):
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
-    team_a = models.ForeignKey(Team,
-                               related_name="team_a",
-                               on_delete=models.CASCADE,
-                               )
-    team_b = models.ForeignKey(Team,
-                               related_name="team_b",
-                               on_delete=models.CASCADE,
-                               )
+    team_a = models.ForeignKey(
+        Team,
+        related_name="team_a",
+        on_delete=models.CASCADE,
+    )
+    team_b = models.ForeignKey(
+        Team,
+        related_name="team_b",
+        on_delete=models.CASCADE,
+    )
     scheduled_week_start_date = models.DateField()
-    
-    scheduled_day_of_week = models.CharField(max_length=20,
-                                 choices=AvailabilitySlot.DayOfWeek.choices,
-                                 )
+
+    scheduled_day_of_week = models.CharField(
+        max_length=20,
+        choices=AvailabilitySlot.DayOfWeek.choices,
+    )
     scheduled_start_time = models.TimeField()
     scheduled_end_time = models.TimeField()
     scheduled_starts_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -456,11 +450,12 @@ class Match(models.Model):
         related_name="confirmed_match",
     )
 
-    status = models.CharField(max_length=30,
-                              choices=STATUS_CHOICES,
-                              default=STATUS_SCHEDULED,
-                               )
-    
+    status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default=STATUS_SCHEDULED,
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -478,7 +473,7 @@ class Match(models.Model):
             raise ValidationError("Scheduled start time must be before scheduled end time.")
         if self.scheduled_starts_at and self.scheduled_ends_at and self.scheduled_starts_at >= self.scheduled_ends_at:
             raise ValidationError("Scheduled start must be before scheduled end.")
-        
+
     def __str__(self):
         return (
             f"{self.team_a} vs {self.team_b} - "
@@ -533,16 +528,15 @@ class MatchReservation(models.Model):
         indexes = [
             models.Index(fields=["player", "status", "starts_at", "ends_at"], name="reservation_conflict_idx"),
         ]
-        
 
 
 class MatchResultSubmission(models.Model):
-    match = models.ForeignKey(Match,
-                              on_delete=models.CASCADE,
-                              related_name="result_submissions",
-                              )
-    submitting_team = models.ForeignKey(Team, 
-                                        on_delete=models.CASCADE)
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.CASCADE,
+        related_name="result_submissions",
+    )
+    submitting_team = models.ForeignKey(Team, on_delete=models.CASCADE)
     submitting_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -560,7 +554,7 @@ class MatchResultSubmission(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["match", "submitting_team"],
-                 name="unique_result_submission_per_team_per_match",
+                name="unique_result_submission_per_team_per_match",
             )
         ]
 
@@ -625,7 +619,7 @@ class PointLedger(models.Model):
             models.UniqueConstraint(fields=["match", "team", "reason"], name="unique_point_ledger_entry"),
         ]
         indexes = [models.Index(fields=["team", "created_at"], name="point_ledger_team_created_idx")]
-            
+
 
 class ScoreCorrectionAudit(models.Model):
     REASON_CONFLICT_RESOLUTION = "conflict_resolution"
@@ -669,13 +663,14 @@ class ScoreCorrectionAudit(models.Model):
 class AdminNotification(models.Model):
     TYPE_SCORE_CONFLICT = "score_conflict"
     TYPE_CHOICES = [(TYPE_SCORE_CONFLICT, "Score conflict")]
-    
-    match = models.ForeignKey(Match,
-                              on_delete=models.CASCADE,
-                              related_name="admin_notifications",
-                              )
+
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.CASCADE,
+        related_name="admin_notifications",
+    )
     notification_type = models.CharField(max_length=40, choices=TYPE_CHOICES, default=TYPE_SCORE_CONFLICT)
-    
+
     message = models.TextField()
     is_resolved = models.BooleanField(
         default=False,
@@ -695,3 +690,82 @@ class AdminNotification(models.Model):
 
     def __str__(self):
         return f"Notification for {self.match}"
+
+
+class WorkflowEvent(models.Model):
+    class EventType(models.TextChoices):
+        JOIN_REQUEST_CREATED = "join_request_created", "Join request created"
+        JOIN_REQUEST_CANCELLED = "join_request_cancelled", "Join request cancelled"
+        JOIN_REQUEST_APPROVED = "join_request_approved", "Join request approved"
+        JOIN_REQUEST_REJECTED = "join_request_rejected", "Join request rejected"
+        MATCH_CONFIRMED = "match_confirmed", "Match confirmed"
+        MATCH_CANCELLED = "match_cancelled", "Match cancelled"
+        SCORE_SUBMITTED = "score_submitted", "Score submitted"
+        SCORE_CONFLICT_CREATED = "score_conflict_created", "Score conflict created"
+        SCORE_CONFLICT_RESOLVED = "score_conflict_resolved", "Score conflict resolved"
+
+    event_type = models.CharField(max_length=40, choices=EventType.choices)
+    dedupe_key = models.CharField(max_length=160, unique=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events_as_actor",
+    )
+    membership = models.ForeignKey(
+        TeamMembership,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    submission = models.ForeignKey(
+        MatchResultSubmission,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    score_correction_audit = models.ForeignKey(
+        ScoreCorrectionAudit,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    previous_state = models.CharField(max_length=40, blank=True)
+    new_state = models.CharField(max_length=40, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [models.Index(fields=["event_type", "created_at"], name="workflow_type_created_idx")]
+
+    def __str__(self):
+        return f"{self.get_event_type_display()} at {self.created_at}"
+
+
+class WorkflowEventRecipient(models.Model):
+    event = models.ForeignKey(WorkflowEvent, on_delete=models.CASCADE, related_name="recipients")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="workflow_event_recipients",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["event", "user"], name="unique_workflow_event_recipient")]
+        indexes = [models.Index(fields=["user", "created_at"], name="workflow_recipient_created_idx")]
+
+    def __str__(self):
+        return f"{self.user} receives {self.event}"
