@@ -1590,8 +1590,11 @@ class PhaseARequestTests(TestCase):
         no_availability_response = self.client.get(reverse("ladder:suggestions"))
 
         no_shared_team, no_shared_players = self.create_team_with_members("suggestions-no-shared", 2)
-        save_availability(no_shared_players[0].user, self.make_dt(2026, 8, 17, 18), self.make_dt(2026, 8, 17, 20))
-        save_availability(no_shared_players[1].user, self.make_dt(2026, 8, 18, 18), self.make_dt(2026, 8, 18, 20))
+        first_starts_at = timezone.now() + timedelta(days=7)
+        first_starts_at = first_starts_at.replace(hour=18, minute=0, second=0, microsecond=0)
+        second_starts_at = first_starts_at + timedelta(days=1)
+        save_availability(no_shared_players[0].user, first_starts_at, first_starts_at + timedelta(hours=2))
+        save_availability(no_shared_players[1].user, second_starts_at, second_starts_at + timedelta(hours=2))
         self.client.force_login(no_shared_players[0].user)
         no_shared_response = self.client.get(reverse("ladder:suggestions"))
 
@@ -1602,8 +1605,9 @@ class PhaseARequestTests(TestCase):
 
     def test_suggestions_explain_missing_opponents_and_render_valid_option_details(self):
         solo_team, solo_players = self.create_team_with_members("suggestions-solo", 2)
-        starts_at = self.make_dt(2026, 8, 19, 18)
-        ends_at = self.make_dt(2026, 8, 19, 20)
+        starts_at = timezone.now() + timedelta(days=7)
+        starts_at = starts_at.replace(hour=18, minute=0, second=0, microsecond=0)
+        ends_at = starts_at + timedelta(hours=2)
         for player in solo_players:
             save_availability(player.user, starts_at, ends_at)
         self.client.force_login(solo_players[0].user)
