@@ -1352,6 +1352,10 @@ class PhaseARequestTests(TestCase):
         self.assertContains(response, "Manual setup")
         self.assertContains(response, "Start here")
         self.assertContains(response, team.name)
+        self.assertContains(response, 'class="dashboard-match-board"')
+        self.assertContains(response, "This week")
+        self.assertContains(response, "Current suggestions")
+        self.assertContains(response, "tennis-net-cal-gao.jpg")
 
     def test_shared_shell_supports_skip_navigation_and_marks_current_page(self):
         _team, players = self.create_team_with_members("shell-navigation", 1)

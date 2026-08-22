@@ -1,77 +1,148 @@
 {% extends "ladder/base.html" %}
+{% load static %}
 
 {% block title %}Dashboard | BC Ladder{% endblock %}
+{% block main_class %}dashboard-shell{% endblock %}
 
 {% block content %}
-<h1>Dashboard</h1>
-<section class="panel setup-panel">
-    <div class="eyebrow">Manual setup</div>
-    <h2>Start here</h2>
-    <p class="muted">Work through these steps to get from a new account to playable matches.</p>
-    <ol class="setup-list">
-        {% for step in setup_steps %}
-            <li class="{% if step.complete %}complete{% endif %}">
-                <span class="setup-marker">{% if step.complete %}✓{% else %}{{ forloop.counter }}{% endif %}</span>
-                <span>
-                    <strong>{{ step.label }}</strong>
-                    <span class="muted">{{ step.detail }}</span>
-                </span>
-                {% if not step.complete %}
-                    <a class="button secondary" href="{% url step.url_name %}">Open</a>
+<div class="dashboard-page">
+    <h1 class="visually-hidden">Dashboard</h1>
+
+    {% if needs_setup %}
+        <section class="setup-panel dashboard-setup" aria-labelledby="setup-heading">
+            <div>
+                <div class="eyebrow">Manual setup</div>
+                <h2 id="setup-heading">Start here</h2>
+                <p class="muted">Finish the remaining steps to start arranging matches.</p>
+            </div>
+            <ol class="setup-list">
+                {% for step in setup_steps %}
+                    <li class="{% if step.complete %}complete{% endif %}">
+                        <span class="setup-marker">{% if step.complete %}✓{% else %}{{ forloop.counter }}{% endif %}</span>
+                        <span>
+                            <strong>{{ step.label }}</strong>
+                            <span class="muted">{{ step.detail }}</span>
+                        </span>
+                        {% if not step.complete %}
+                            <a class="button secondary" href="{% url step.url_name %}">Open</a>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ol>
+        </section>
+    {% endif %}
+
+    <div class="dashboard-summary">
+        <section class="dashboard-match-board" aria-labelledby="next-match-heading">
+            <div class="eyebrow">Next match</div>
+            {% if next_match %}
+                <h2 id="next-match-heading">{{ next_match.scheduled_starts_at|date:"l, F j, Y" }}</h2>
+                <p class="match-time">{{ next_match.scheduled_starts_at|date:"g:i A" }}–{{ next_match.scheduled_ends_at|date:"g:i A" }}</p>
+                <div class="match-lineups">
+                    <section aria-label="{{ next_match.team_a.name }} lineup">
+                        <h3>{{ next_match.team_a.name }}</h3>
+                        {% for participant in next_match_team_a_players %}
+                            <p>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</p>
+                        {% empty %}
+                            <p class="muted">Lineup not recorded.</p>
+                        {% endfor %}
+                    </section>
+                    <span class="versus" aria-hidden="true">vs</span>
+                    <section aria-label="{{ next_match.team_b.name }} lineup">
+                        <h3>{{ next_match.team_b.name }}</h3>
+                        {% for participant in next_match_team_b_players %}
+                            <p>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</p>
+                        {% empty %}
+                            <p class="muted">Lineup not recorded.</p>
+                        {% endfor %}
+                    </section>
+                </div>
+                <footer class="match-board-footer">
+                    <div>
+                        <strong>{% if next_match.status == "scheduled" %}Confirmed{% else %}{{ next_match.get_status_display }}{% endif %}</strong>
+                        <span class="muted">Both selected teams are booked for this time.</span>
+                    </div>
+                    <a class="button" href="{% url 'ladder:match_detail' next_match.id %}">View match</a>
+                </footer>
+            {% else %}
+                <h2 id="next-match-heading">No match booked</h2>
+                <p class="muted">Add availability and review suggestions to arrange your next match.</p>
+                <a class="button" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
+            {% endif %}
+        </section>
+
+        <aside class="dashboard-week" aria-labelledby="week-heading">
+            <div class="eyebrow" id="week-heading">This week</div>
+            <div class="week-list">
+                {% for slot in availability|slice:":3" %}
+                    <div class="week-row">
+                        <strong>{{ slot.starts_at|date:"D, M j" }}</strong>
+                        <span>{{ slot.starts_at|date:"g:i A" }}–{{ slot.ends_at|date:"g:i A" }}</span>
+                        <span class="muted">Available</span>
+                    </div>
+                {% empty %}
+                    <p class="muted">No active availability.</p>
+                {% endfor %}
+            </div>
+            <a class="text-link" href="{% url 'ladder:availability' %}">Manage availability</a>
+            <div class="ladder-rank">
+                <div class="eyebrow">Your ladder rank</div>
+                {% if standing %}
+                    <p><strong>{{ standing.position }}</strong> · {{ team.get_division_display }}</p>
+                    <a class="text-link" href="{% url 'ladder:ladder' team.division %}">View full ladder</a>
+                {% else %}
+                    <p class="muted">No standing recorded yet.</p>
                 {% endif %}
-            </li>
-        {% endfor %}
-    </ol>
-</section>
-<div class="grid">
-    <section class="panel">
-        <div class="eyebrow">Membership</div>
-        <h2>Team</h2>
-        {% if team %}
-            <p>{{ team.name }} · {{ team.get_division_display }}</p>
-            <a class="button" href="{% url 'ladder:team' %}">Manage team</a>
-        {% else %}
-            <p class="muted">You are not on a team.</p>
-            <a class="button" href="{% url 'ladder:team' %}">Choose team</a>
-        {% endif %}
-    </section>
-    <section class="panel">
-        <div class="eyebrow">Next windows</div>
-        <h2>Availability</h2>
-        {% for slot in availability %}
-            <p>{{ slot.starts_at|date:"M j, Y g:i A" }} to {{ slot.ends_at|date:"g:i A" }}</p>
-        {% empty %}
-            <div class="empty-state">
-                <p class="muted">No active availability.</p>
-                <a class="button secondary" href="{% url 'ladder:availability' %}">Add availability</a>
             </div>
-        {% endfor %}
-        <a class="button" href="{% url 'ladder:availability' %}">Manage availability</a>
-    </section>
-    <section class="panel">
-        <div class="eyebrow">Matchmaking</div>
-        <h2>Suggestions</h2>
-        {% for suggestion in suggestions %}
-            <p>{{ suggestion.team_a }} vs {{ suggestion.team_b }} · {{ suggestion.get_status_display }}</p>
-        {% empty %}
-            <div class="empty-state">
-                <p class="muted">No current suggestions.</p>
-                <a class="button secondary" href="{% url 'ladder:suggestions' %}">Find opponents</a>
+        </aside>
+    </div>
+
+    <section class="dashboard-suggestions" aria-labelledby="suggestions-heading">
+        <div class="section-heading-row">
+            <div>
+                <div class="eyebrow">Current suggestions</div>
+                <h2 class="visually-hidden" id="suggestions-heading">Current suggestions</h2>
             </div>
-        {% endfor %}
-        <a class="button" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
-    </section>
-    <section class="panel">
-        <div class="eyebrow">Schedule</div>
-        <h2>Matches</h2>
-        {% for match in matches %}
-            <p><a href="{% url 'ladder:match_detail' match.id %}">{{ match.team_a }} vs {{ match.team_b }}</a></p>
-        {% empty %}
-            <div class="empty-state">
-                <p class="muted">No matches yet.</p>
-                <a class="button secondary" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
+            <a class="text-link" href="{% url 'ladder:suggestions' %}">Review all</a>
+        </div>
+        <div class="suggestion-list">
+            <div class="suggestion-columns" aria-hidden="true">
+                <span>Date &amp; time</span>
+                <span>Teams</span>
+                <span>Selected players</span>
+                <span>Status</span>
+                <span></span>
             </div>
-        {% endfor %}
+            {% for suggestion in suggestions|slice:":3" %}
+                <div class="suggestion-row">
+                    <time datetime="{{ suggestion.starts_at|date:'c' }}">
+                        <strong>{{ suggestion.starts_at|date:"D, M j" }}</strong>
+                        <span>{{ suggestion.starts_at|date:"g:i A" }}–{{ suggestion.ends_at|date:"g:i A" }}</span>
+                    </time>
+                    <p><strong>{{ suggestion.team_a.name }}</strong><span class="muted">vs</span><strong>{{ suggestion.team_b.name }}</strong></p>
+                    <div class="suggestion-players">
+                        <span class="visually-hidden">Selected players:</span>
+                        {% for participant in suggestion.participants.all %}
+                            <span>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</span>
+                        {% empty %}
+                            <span class="muted">Lineup not recorded</span>
+                        {% endfor %}
+                    </div>
+                    <span>{{ suggestion.get_status_display }}</span>
+                    <a href="{% url 'ladder:suggestions' %}">View</a>
+                </div>
+            {% empty %}
+                <div class="dashboard-empty-row">
+                    <p>No current suggestions.</p>
+                    <a class="button secondary" href="{% url 'ladder:availability' %}">Check availability</a>
+                </div>
+            {% endfor %}
+        </div>
     </section>
+
+    <figure class="dashboard-photo">
+        <img src="{% static 'ladder/images/tennis-net-cal-gao.jpg' %}" alt="A tennis ball caught against a court net">
+        <figcaption>Photo by cal gao on Unsplash.</figcaption>
+    </figure>
 </div>
 {% endblock %}

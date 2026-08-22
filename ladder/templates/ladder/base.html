@@ -5,8 +5,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}BC Ladder{% endblock %}</title>
-    <link rel="stylesheet" href="{% static 'ladder/app.css' %}?v=phase-b1-shell-2">
-    <script src="{% static 'ladder/app.js' %}?v=phase-b1-shell-2" defer></script>
+    <link rel="stylesheet" href="{% static 'ladder/app.css' %}?v=phase-b1-dashboard-1">
+    <script src="{% static 'ladder/app.js' %}?v=phase-b1-dashboard-1" defer></script>
 </head>
 <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -14,11 +14,14 @@
         <div class="wrap topbar">
             <div class="site-identity">
                 <a class="brand" href="{% if user.is_authenticated %}{% url 'ladder:dashboard' %}{% else %}{% url 'ladder:login' %}{% endif %}">BC Tennis Ladder</a>
-                {% if user.is_authenticated %}<div class="header-user">{{ user.username }}</div>{% endif %}
             </div>
-            <details class="nav-disclosure" open>
-                <summary>Menu</summary>
-                <nav class="main-nav" aria-label="Main navigation">
+            {% if user.is_authenticated %}<div class="header-user">Welcome, {{ user.username }}</div>{% endif %}
+        </div>
+        <div class="nav-band">
+            <div class="wrap nav-shell">
+                <details class="nav-disclosure" open>
+                    <summary>Menu</summary>
+                    <nav class="main-nav" aria-label="Main navigation">
                     {% if user.is_authenticated %}
                         <a href="{% url 'ladder:dashboard' %}"{% if request.resolver_match.url_name == "dashboard" %} aria-current="page"{% endif %}>Dashboard</a>
                         <a href="{% url 'ladder:team' %}"{% if request.resolver_match.url_name == "team" %} aria-current="page"{% endif %}>Team</a>
@@ -35,11 +38,12 @@
                         <a href="{% url 'ladder:login' %}"{% if request.resolver_match.url_name == "login" %} aria-current="page"{% endif %}>Log in</a>
                         <a href="{% url 'ladder:register' %}"{% if request.resolver_match.url_name == "register" %} aria-current="page"{% endif %}>Create account</a>
                     {% endif %}
-                </nav>
-            </details>
+                    </nav>
+                </details>
+            </div>
         </div>
     </header>
-    <main class="wrap page-shell" id="main-content" tabindex="-1">
+    <main class="wrap page-shell {% block main_class %}{% endblock %}" id="main-content" tabindex="-1">
         {% if messages %}
             <div class="messages" aria-label="Notifications">
                 {% for message in messages %}
