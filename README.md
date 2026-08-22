@@ -167,14 +167,8 @@ origins only; local development origins and wildcards are rejected.
 - The UI is server-rendered and intentionally lightweight. It is ready for club
   review, not final brand polish.
 
-## Phase B Checklist
+## Current Project Stage
 
-- Render web service and Render PostgreSQL deployment trial.
-- Broader PostgreSQL-specific transaction/concurrency coverage.
-- Data audit before production migration to confirm no existing overlapping
-  active availability or active reservation rows.
-- Deployment secret management and production host configuration.
-- Static-file hosting.
-- HTTPS, secure cookies, trusted proxy settings, and staged HSTS.
-- Backups, restore testing, monitoring, and structured logging.
-- Dependency/security scanning.
+The locked frontend-pilot and deployment sequence lives in
+[docs/agents/current-stage.md](docs/agents/current-stage.md). Keep that roadmap
+as the single source of truth instead of duplicating a phase checklist here.
