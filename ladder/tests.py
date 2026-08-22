@@ -1353,6 +1353,29 @@ class PhaseARequestTests(TestCase):
         self.assertContains(response, "Start here")
         self.assertContains(response, team.name)
 
+    def test_shared_shell_supports_skip_navigation_and_marks_current_page(self):
+        _team, players = self.create_team_with_members("shell-navigation", 1)
+        self.client.force_login(players[0].user)
+
+        dashboard_response = self.client.get(reverse("ladder:dashboard"))
+        team_response = self.client.get(reverse("ladder:team"))
+
+        self.assertContains(dashboard_response, 'class="skip-link" href="#main-content"')
+        self.assertContains(dashboard_response, 'id="main-content" tabindex="-1"')
+        self.assertContains(dashboard_response, "<summary>Menu</summary>", html=True)
+        self.assertContains(
+            dashboard_response,
+            f'href="{reverse("ladder:dashboard")}" aria-current="page"',
+        )
+        self.assertNotContains(
+            dashboard_response,
+            f'href="{reverse("ladder:team")}" aria-current="page"',
+        )
+        self.assertContains(
+            team_response,
+            f'href="{reverse("ladder:team")}" aria-current="page"',
+        )
+
     def test_dashboard_setup_checklist_shows_pending_join_request(self):
         profile = self.create_profile("dashboard-pending")
         team = Team.objects.create(name="Dashboard Pending Team", division=Team.DIVISION_MENS)
