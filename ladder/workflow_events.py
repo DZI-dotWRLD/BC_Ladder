@@ -11,6 +11,10 @@ def match_participant_user_ids(match):
     return set(match.participants.values_list("player__user_id", flat=True))
 
 
+def suggestion_participant_user_ids(suggestion):
+    return set(suggestion.participants.values_list("player__user_id", flat=True))
+
+
 def record_workflow_event(
     *,
     event_type,
@@ -19,6 +23,7 @@ def record_workflow_event(
     actor=None,
     membership=None,
     match=None,
+    suggestion=None,
     submission=None,
     score_correction_audit=None,
     previous_state="",
@@ -32,6 +37,7 @@ def record_workflow_event(
             "actor": actor,
             "membership": membership,
             "match": match,
+            "suggestion": suggestion,
             "submission": submission,
             "score_correction_audit": score_correction_audit,
             "previous_state": previous_state,

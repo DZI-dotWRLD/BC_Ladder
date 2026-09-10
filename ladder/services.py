@@ -11,6 +11,7 @@ from .models import (
     AdminNotification,
     AvailabilitySlot,
     ConfirmedMatchResult,
+    EmailNotificationDelivery,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -27,7 +28,13 @@ from .models import (
     TeamMembership,
     WorkflowEvent,
 )
-from .workflow_events import active_staff_user_ids, match_participant_user_ids, record_workflow_event
+from .email_notifications import queue_email_notifications
+from .workflow_events import (
+    active_staff_user_ids,
+    match_participant_user_ids,
+    record_workflow_event,
+    suggestion_participant_user_ids,
+)
 
 CLUB_TIMEZONE = ZoneInfo("America/New_York")
 WIN_POINTS = 3
@@ -863,7 +870,7 @@ def _suggestion_participant_signature(suggestion):
     return {side: tuple(player_ids) for side, player_ids in signature.items()}
 
 
-def create_match_suggestion(option, expires_at=None):
+def create_match_suggestion(option, expires_at=None, actor=None):
     expires_at = expires_at or option["starts_at"]
     with transaction.atomic():
         option_signature = _participant_signature_for_option(option)
@@ -906,6 +913,25 @@ def create_match_suggestion(option, expires_at=None):
                     )
                 )
         SuggestionParticipant.objects.bulk_create(rows)
+        recipient_user_ids = suggestion_participant_user_ids(suggestion)
+        event, created = record_workflow_event(
+            event_type=WorkflowEvent.EventType.MATCH_REQUEST_CREATED,
+            dedupe_key=f"match_request_created:{suggestion.id}",
+            actor=actor,
+            suggestion=suggestion,
+            recipient_user_ids=recipient_user_ids,
+            previous_state="",
+            new_state=MatchSuggestion.STATUS_PROPOSED,
+            metadata={
+                "team_a_id": suggestion.team_a_id,
+                "team_b_id": suggestion.team_b_id,
+                "scheduled_starts_at": suggestion.starts_at.isoformat(),
+                "scheduled_ends_at": suggestion.ends_at.isoformat(),
+                "player_ids": sorted(participant.player_id for participant in rows),
+            },
+        )
+        if created:
+            queue_email_notifications(event, recipient_user_ids, EmailNotificationDelivery.TYPE_MATCH_REQUEST)
         return suggestion
 
 
@@ -1238,7 +1264,7 @@ def create_admin_notification_for_conflict(match, actor=None):
             defaults={"message": "Result submissions do not match. Admin review is required."},
         )
         if created:
-            record_workflow_event(
+            event, event_created = record_workflow_event(
                 event_type=WorkflowEvent.EventType.SCORE_CONFLICT_CREATED,
                 dedupe_key=f"score_conflict_created:{notification.id}",
                 actor=actor,
@@ -1248,6 +1274,8 @@ def create_admin_notification_for_conflict(match, actor=None):
                 new_state="conflict",
                 metadata={"admin_notification_id": notification.id},
             )
+            if event_created:
+                queue_email_notifications(event, active_staff_user_ids(), EmailNotificationDelivery.TYPE_SCORE_CONFLICT)
         return notification
 
 

@@ -547,7 +547,7 @@ def create_suggestion_view(request, option_index):
         return redirect("ladder:suggestions")
 
     try:
-        create_match_suggestion(option)
+        create_match_suggestion(option, actor=request.user)
         messages.success(request, "Suggestion created.")
     except DomainError as error:
         _message_domain_error(request, error)
