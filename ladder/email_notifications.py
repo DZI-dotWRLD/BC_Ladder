@@ -115,7 +115,7 @@ def deliver_event_email_notifications(event_id, include_failed=False, include_sk
 
     with transaction.atomic():
         deliveries = list(
-            EmailNotificationDelivery.objects.select_for_update()
+            EmailNotificationDelivery.objects.select_for_update(of=("self",))
             .filter(event_id=event_id, status__in=statuses)
             .select_related(
                 "user",

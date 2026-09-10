@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from io import StringIO
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -37,6 +38,7 @@ from .models import (
     TeamMembership,
     WorkflowEvent,
 )
+from .email_notifications import deliver_event_email_notifications
 from .services import (
     AuthorizationFailure,
     InvalidInput,
@@ -2582,8 +2584,6 @@ class EmailNotificationTests(TestCase):
         self.assertEqual(EmailNotificationDelivery.objects.count(), 1)
 
     def test_backend_failure_preserves_request_and_can_be_retried(self):
-        from unittest.mock import patch
-
         with patch("ladder.email_notifications.EmailMessage.send", side_effect=OSError("SMTP unavailable")):
             with self.assertLogs("ladder.email_notifications", level="ERROR"), self.captureOnCommitCallbacks(execute=True):
                 suggestion, _players_a, _players_b = self.create_suggestion()
@@ -2599,6 +2599,19 @@ class EmailNotificationTests(TestCase):
             EmailNotificationDelivery.objects.filter(status=EmailNotificationDelivery.STATUS_SENT).count(),
             4,
         )
+
+    def test_delivery_locks_only_outbox_rows(self):
+        suggestion, _players_a, _players_b = self.create_suggestion()
+        event = WorkflowEvent.objects.get(suggestion=suggestion)
+
+        with patch.object(
+            EmailNotificationDelivery.objects,
+            "select_for_update",
+            wraps=EmailNotificationDelivery.objects.select_for_update,
+        ) as select_for_update:
+            deliver_event_email_notifications(event.id)
+
+        select_for_update.assert_called_once_with(of=("self",))
 
 
 class ProductionSettingsValidationTests(TestCase):
