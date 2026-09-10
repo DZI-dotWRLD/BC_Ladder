@@ -134,10 +134,12 @@ DATABASE_URL
 DJANGO_SECURE_SSL_REDIRECT=true
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
-DJANGO_EMAIL_HOST
-DJANGO_EMAIL_PORT
+DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+DJANGO_EMAIL_HOST=smtp.gmail.com
+DJANGO_EMAIL_PORT=587
 DJANGO_EMAIL_HOST_USER
 DJANGO_EMAIL_HOST_PASSWORD
+DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL
 ```
 
@@ -177,8 +179,13 @@ default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
 - Equal-points ladder ordering is points, wins, fewer losses, then team name/id.
 - Score-conflict correction is admin-only through an audited official-submission
   workflow.
-- Captain role, notification channels, and richer score-correction policy still
-  need product decisions before production.
+- New match requests email the four selected players. Score conflicts email all
+  active staff administrators. Delivery uses a transactional outbox; run
+  `python manage.py send_notification_emails --retry-failed` to retry provider
+  failures, or `python manage.py send_notification_emails --retry-skipped` after
+  correcting a legacy user's email. New registrations require an email address.
+- Captain role, additional notification channels, and richer score-correction
+  policy still need product decisions before production.
 - The UI is server-rendered and intentionally lightweight. It is ready for club
   review, not final brand polish.
 

@@ -113,12 +113,13 @@ Men's and Women's Doubles ladders.
 `WorkflowEvent` and its snapshotted recipients are append-only historical facts.
 The application provides no update/delete service, Django admin is read-only,
 references are protected, and workflows append at most one event for the first
-successful state transition. There is no backfill, read/unread state, delivery
-state, notification inbox, or email provider yet.
+successful state transition. There is no backfill, read/unread state, or
+notification inbox.
 
 Record these event types:
 
 - join request created, cancelled, approved, and rejected;
+- match request created;
 - match confirmed and cancelled;
 - score submitted;
 - score conflict created and resolved.
@@ -128,6 +129,7 @@ Recipient snapshots are:
 - join created/cancelled: requesting player and every active `is_staff=True`
   user at that time;
 - join approved/rejected: requesting player and resolving administrator;
+- match request created: exactly the four selected players;
 - match confirmed/cancelled and score submitted: exactly the four selected
   participants;
 - score conflict created: four selected participants and every active staff user;
@@ -138,6 +140,14 @@ Store actor, type, timestamp, protected related-object references, previous/new
 state, and a small event-specific JSON snapshot such as team names, player IDs,
 scheduled time, cancellation restoration outcome, or score signature. Avoid
 email addresses, unnecessary usernames, and arbitrary request data.
+
+Match-request email is queued for the four selected players and score-conflict
+email is queued for every active staff administrator. Queue rows are written in
+the domain transaction, delivery starts only after commit, recipients are sent
+individual messages, and provider failure never reverses committed domain
+state. Delivery attempts and status are auditable, and failed or skipped
+attempts can be retried without creating duplicate queue rows. Do not store
+provider credentials or recipient email addresses in workflow-event metadata.
 
 ## Cross-cutting requirements
 
@@ -191,6 +201,6 @@ Read the current implementation or obtain owner approval before changing:
 - exact ladder point values and regular-set 6-6 policy;
 - club timezone and availability granularity;
 - captain permissions;
-- notification delivery channels and provider;
+- additional notification delivery channels and any future provider migration;
 - richer score-correction policy; and
 - long-term production hosting, retention, backup, and monitoring policy.

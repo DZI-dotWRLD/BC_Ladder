@@ -65,7 +65,7 @@ class ProfileSetupForm(forms.ModelForm):
 
 class PlayerRegistrationForm(UserCreationForm):
     email = forms.EmailField(
-        help_text="Used only for account recovery.",
+        help_text="Used for account recovery, match requests, and important ladder notifications.",
         widget=forms.EmailInput(attrs={"autocomplete": "email"}),
     )
     gender = forms.ChoiceField(choices=PlayerProfile.GENDER_CHOICES)
