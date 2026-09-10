@@ -1096,14 +1096,14 @@ class RemediationServiceTests(TestCase):
     def test_dual_acceptance_confirms_match_and_consumes_only_four_players(self):
         team_a, team_a_players = self.create_team_with_members("accept-a", 3)
         team_b, team_b_players = self.create_team_with_members("accept-b", 2)
-        starts_at = self.make_dt(2026, 7, 8, 18)
-        ends_at = self.make_dt(2026, 7, 8, 20)
+        starts_at = timezone.now() + timedelta(days=1)
+        ends_at = starts_at + timedelta(hours=2)
         for player in team_a_players[:2] + team_b_players:
             save_availability(player.user, starts_at, ends_at)
         third_slot = save_availability(team_a_players[2].user, starts_at, ends_at)
 
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 9, 1, tzinfo=self.club_tz))
+        suggestion = create_match_suggestion(option, expires_at=starts_at)
 
         partial = accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
         match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
@@ -1119,13 +1119,13 @@ class RemediationServiceTests(TestCase):
     def test_non_lineup_teammate_cannot_accept_suggestion(self):
         team_a, team_a_players = self.create_team_with_members("accept-auth-a", 3)
         team_b, team_b_players = self.create_team_with_members("accept-auth-b", 2)
-        starts_at = self.make_dt(2026, 7, 8, 18)
-        ends_at = self.make_dt(2026, 7, 8, 20)
+        starts_at = timezone.now() + timedelta(days=1)
+        ends_at = starts_at + timedelta(hours=2)
         for player in team_a_players + team_b_players:
             save_availability(player.user, starts_at, ends_at)
 
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 9, 1, tzinfo=self.club_tz))
+        suggestion = create_match_suggestion(option, expires_at=starts_at)
 
         with self.assertRaises(AuthorizationFailure):
             accept_suggestion(team_a_players[2].user, suggestion, suggestion.version)
