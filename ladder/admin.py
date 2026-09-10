@@ -8,6 +8,7 @@ from .models import (
     AvailabilitySlot,
     Challenge,
     ConfirmedMatchResult,
+    EmailNotificationDelivery,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -341,12 +342,14 @@ class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
 
 
 class WorkflowEventAdmin(admin.ModelAdmin):
-    list_display = ("event_type", "actor", "membership", "match", "submission", "created_at")
+    list_display = ("event_type", "actor", "membership", "suggestion", "match", "submission", "created_at")
     list_filter = ("event_type", "created_at")
     list_select_related = (
         "actor",
         "membership__player__user",
         "membership__team",
+        "suggestion__team_a",
+        "suggestion__team_b",
         "match__team_a",
         "match__team_b",
         "submission",
@@ -357,6 +360,7 @@ class WorkflowEventAdmin(admin.ModelAdmin):
         "dedupe_key",
         "actor",
         "membership",
+        "suggestion",
         "match",
         "submission",
         "score_correction_audit",
@@ -393,6 +397,33 @@ class WorkflowEventRecipientAdmin(admin.ModelAdmin):
         return False
 
 
+class EmailNotificationDeliveryAdmin(admin.ModelAdmin):
+    list_display = ("notification_type", "user", "status", "attempts", "last_attempt_at", "sent_at")
+    list_filter = ("notification_type", "status", "created_at")
+    list_select_related = ("event", "user")
+    readonly_fields = (
+        "event",
+        "user",
+        "notification_type",
+        "status",
+        "attempts",
+        "last_error",
+        "last_attempt_at",
+        "sent_at",
+        "created_at",
+    )
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
 admin.site.register(Team, TeamAdmin)
 admin.site.register(TeamMembership, TeamMembershipAdmin)
@@ -413,3 +444,4 @@ admin.site.register(ScoreCorrectionAudit, ScoreCorrectionAuditAdmin)
 admin.site.register(AdminNotification, AdminNotificationAdmin)
 admin.site.register(WorkflowEvent, WorkflowEventAdmin)
 admin.site.register(WorkflowEventRecipient, WorkflowEventRecipientAdmin)
+admin.site.register(EmailNotificationDelivery, EmailNotificationDeliveryAdmin)

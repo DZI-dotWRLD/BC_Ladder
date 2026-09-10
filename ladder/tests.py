@@ -4,11 +4,12 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, connection, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -19,6 +20,7 @@ from .models import (
     AvailabilitySlot,
     Challenge,
     ConfirmedMatchResult,
+    EmailNotificationDelivery,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -1099,7 +1101,7 @@ class RemediationServiceTests(TestCase):
         third_slot = save_availability(team_a_players[2].user, starts_at, ends_at)
 
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 9, 1, tzinfo=self.club_tz))
+        suggestion = create_match_suggestion(option, expires_at=datetime(2027, 9, 1, tzinfo=self.club_tz))
 
         partial = accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
         match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
@@ -1121,7 +1123,7 @@ class RemediationServiceTests(TestCase):
             save_availability(player.user, starts_at, ends_at)
 
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
-        suggestion = create_match_suggestion(option, expires_at=datetime(2026, 9, 1, tzinfo=self.club_tz))
+        suggestion = create_match_suggestion(option, expires_at=datetime(2027, 9, 1, tzinfo=self.club_tz))
 
         with self.assertRaises(AuthorizationFailure):
             accept_suggestion(team_a_players[2].user, suggestion, suggestion.version)
@@ -1311,6 +1313,7 @@ class PhaseARequestTests(TestCase):
             reverse("ladder:register"),
             {
                 "username": "new-register",
+                "email": "New.Player@Example.com",
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -1320,7 +1323,24 @@ class PhaseARequestTests(TestCase):
         user = get_user_model().objects.get(username="new-register")
         self.assertRedirects(response, reverse("ladder:dashboard"))
         self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
+        self.assertEqual(user.email, "new.player@example.com")
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_self_registration_requires_a_valid_email(self):
+        response = self.client.post(
+            reverse("ladder:register"),
+            {
+                "username": "no-email-register",
+                "email": "not-an-email",
+                "gender": PlayerProfile.GENDER_FEMALE,
+                "password1": "StrongPass123!",
+                "password2": "StrongPass123!",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(response.context["form"], "email", "Enter a valid email address.")
+        self.assertFalse(get_user_model().objects.filter(username="no-email-register").exists())
 
     def test_dashboard_redirects_user_without_profile_to_setup(self):
         user = get_user_model().objects.create_user(username="needs-profile", password="pass")
@@ -2294,6 +2314,181 @@ class DataIntegrityAuditCommandTests(TestCase):
             call_command("audit_data_integrity", stdout=output)
 
         self.assertIn("result.submission_match_mismatch", output.getvalue())
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    DEFAULT_FROM_EMAIL="BC Ladder <ladder@example.com>",
+)
+class EmailNotificationTests(TestCase):
+    club_tz = ZoneInfo("America/New_York")
+
+    def setUp(self):
+        mail.outbox.clear()
+
+    def create_profile(self, username, *, email=None, is_staff=False, is_active=True):
+        user = get_user_model().objects.create_user(
+            username=username,
+            email=email if email is not None else f"{username}@example.com",
+        )
+        user.is_staff = is_staff
+        user.is_active = is_active
+        user.save(update_fields=["is_staff", "is_active"])
+        return PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE)
+
+    def create_team_with_members(self, name, count):
+        team = Team.objects.create(name=name, division=Team.DIVISION_MENS)
+        players = []
+        for index in range(1, count + 1):
+            profile = self.create_profile(f"{name.lower().replace(' ', '-')}-{index}")
+            request_membership_change(profile.user, profile, team, "join")
+            players.append(profile)
+        return team, players
+
+    def make_dt(self, day, hour):
+        return datetime(2027, 9, day, hour, tzinfo=self.club_tz)
+
+    def create_suggestion(self, *, third_member=False):
+        team_a, players_a = self.create_team_with_members("Request A", 3 if third_member else 2)
+        team_b, players_b = self.create_team_with_members("Request B", 2)
+        starts_at = self.make_dt(13, 18)
+        ends_at = self.make_dt(13, 20)
+        for player in players_a + players_b:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+        suggestion = create_match_suggestion(option, expires_at=self.make_dt(20, 18), actor=players_a[0].user)
+        return suggestion, players_a, players_b
+
+    def test_new_match_request_emails_exactly_the_four_selected_players(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            suggestion, players_a, players_b = self.create_suggestion(third_member=True)
+
+        selected_user_ids = set(suggestion.participants.values_list("player__user_id", flat=True))
+        event = WorkflowEvent.objects.get(event_type=WorkflowEvent.EventType.MATCH_REQUEST_CREATED)
+        self.assertEqual(event.suggestion, suggestion)
+        self.assertEqual(set(event.recipients.values_list("user_id", flat=True)), selected_user_ids)
+        self.assertEqual(len(mail.outbox), 4)
+        self.assertEqual(
+            {message.to[0] for message in mail.outbox}, {user.email for user in get_user_model().objects.filter(id__in=selected_user_ids)}
+        )
+        self.assertNotIn(players_a[2].user.email, {message.to[0] for message in mail.outbox})
+        for message in mail.outbox:
+            self.assertEqual(len(message.to), 1)
+            self.assertIn("Request A vs Request B", message.subject)
+            self.assertIn("Monday, September 13, 2027", message.body)
+            self.assertIn("06:00 PM–08:00 PM America/New_York", message.body)
+            for player in players_a[:2] + players_b:
+                self.assertIn(player.user.username, message.body)
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(status=EmailNotificationDelivery.STATUS_SENT).count(),
+            4,
+        )
+
+    def test_duplicate_match_request_does_not_queue_or_send_again(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            suggestion, _players_a, _players_b = self.create_suggestion()
+        option = {
+            "team_a": suggestion.team_a,
+            "team_b": suggestion.team_b,
+            "team_a_players": tuple(
+                participant.player for participant in suggestion.participants.filter(side="a").order_by("lineup_order")
+            ),
+            "team_b_players": tuple(
+                participant.player for participant in suggestion.participants.filter(side="b").order_by("lineup_order")
+            ),
+            "starts_at": suggestion.starts_at,
+            "ends_at": suggestion.ends_at,
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            duplicate = create_match_suggestion(option, expires_at=self.make_dt(20, 18))
+
+        self.assertEqual(duplicate, suggestion)
+        self.assertEqual(len(mail.outbox), 4)
+        self.assertEqual(EmailNotificationDelivery.objects.count(), 4)
+
+    def test_missing_player_email_is_recorded_as_skipped_without_blocking_request(self):
+        team_a, players_a = self.create_team_with_members("Missing A", 2)
+        team_b, players_b = self.create_team_with_members("Missing B", 2)
+        players_b[1].user.email = ""
+        players_b[1].user.save(update_fields=["email"])
+        starts_at = self.make_dt(14, 18)
+        ends_at = self.make_dt(14, 20)
+        for player in players_a + players_b:
+            save_availability(player.user, starts_at, ends_at)
+        option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
+
+        with self.assertLogs("ladder.email_notifications", level="WARNING"), self.captureOnCommitCallbacks(execute=True):
+            suggestion = create_match_suggestion(option, expires_at=self.make_dt(21, 18))
+
+        self.assertIsNotNone(suggestion.pk)
+        self.assertEqual(len(mail.outbox), 3)
+        skipped = EmailNotificationDelivery.objects.get(user=players_b[1].user)
+        self.assertEqual(skipped.status, EmailNotificationDelivery.STATUS_SKIPPED)
+
+        players_b[1].user.email = "corrected@example.com"
+        players_b[1].user.save(update_fields=["email"])
+        call_command("send_notification_emails", "--retry-skipped", stdout=StringIO())
+        skipped.refresh_from_db()
+        self.assertEqual(skipped.status, EmailNotificationDelivery.STATUS_SENT)
+        self.assertEqual(mail.outbox[-1].to, ["corrected@example.com"])
+
+    def test_score_conflict_emails_only_active_staff_with_both_scores(self):
+        admin = self.create_profile("active-admin", email="admin@example.com", is_staff=True)
+        self.create_profile("inactive-admin", email="inactive@example.com", is_staff=True, is_active=False)
+        team_a, players_a = self.create_team_with_members("Score A", 2)
+        team_b, players_b = self.create_team_with_members("Score B", 2)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2027, 9, 13),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.WEDNESDAY,
+            scheduled_start_time=time(18),
+            scheduled_end_time=time(20),
+        )
+        for side, team, players in (("a", team_a, players_a), ("b", team_b, players_b)):
+            for order, player in enumerate(players, start=1):
+                MatchParticipant.objects.create(match=match, team=team, player=player, side=side, lineup_order=order)
+
+        submit_match_result(players_a[0].user, match, [(6, 4), (6, 4)])
+        with self.captureOnCommitCallbacks(execute=True):
+            submit_match_result(players_b[0].user, match, [(4, 6), (4, 6)])
+
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [admin.user.email])
+        self.assertIn("Action required: score conflict", message.subject)
+        self.assertIn("Score A submitted: 6-4, 6-4", message.body)
+        self.assertIn("Score B submitted: 4-6, 4-6", message.body)
+        self.assertIn("Wednesday, September 15, 2027", message.body)
+        self.assertNotIn("inactive@example.com", {item.to[0] for item in mail.outbox})
+        self.assertEqual(EmailNotificationDelivery.objects.count(), 1)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            duplicate = create_admin_notification_for_conflict(match)
+
+        self.assertEqual(duplicate, AdminNotification.objects.get(match=match, is_resolved=False))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(EmailNotificationDelivery.objects.count(), 1)
+
+    def test_backend_failure_preserves_request_and_can_be_retried(self):
+        from unittest.mock import patch
+
+        with patch("ladder.email_notifications.EmailMessage.send", side_effect=OSError("SMTP unavailable")):
+            with self.assertLogs("ladder.email_notifications", level="ERROR"), self.captureOnCommitCallbacks(execute=True):
+                suggestion, _players_a, _players_b = self.create_suggestion()
+
+        self.assertTrue(MatchSuggestion.objects.filter(pk=suggestion.pk).exists())
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(status=EmailNotificationDelivery.STATUS_FAILED).count(),
+            4,
+        )
+        call_command("send_notification_emails", "--retry-failed", stdout=StringIO())
+        self.assertEqual(len(mail.outbox), 4)
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(status=EmailNotificationDelivery.STATUS_SENT).count(),
+            4,
+        )
 
 
 class ProductionSettingsValidationTests(TestCase):

@@ -698,6 +698,7 @@ class WorkflowEvent(models.Model):
         JOIN_REQUEST_CANCELLED = "join_request_cancelled", "Join request cancelled"
         JOIN_REQUEST_APPROVED = "join_request_approved", "Join request approved"
         JOIN_REQUEST_REJECTED = "join_request_rejected", "Join request rejected"
+        MATCH_REQUEST_CREATED = "match_request_created", "Match request created"
         MATCH_CONFIRMED = "match_confirmed", "Match confirmed"
         MATCH_CANCELLED = "match_cancelled", "Match cancelled"
         SCORE_SUBMITTED = "score_submitted", "Score submitted"
@@ -722,6 +723,13 @@ class WorkflowEvent(models.Model):
     )
     match = models.ForeignKey(
         Match,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="workflow_events",
+    )
+    suggestion = models.ForeignKey(
+        MatchSuggestion,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -769,3 +777,44 @@ class WorkflowEventRecipient(models.Model):
 
     def __str__(self):
         return f"{self.user} receives {self.event}"
+
+
+class EmailNotificationDelivery(models.Model):
+    TYPE_MATCH_REQUEST = "match_request"
+    TYPE_SCORE_CONFLICT = "score_conflict"
+    TYPE_CHOICES = [
+        (TYPE_MATCH_REQUEST, "Match request"),
+        (TYPE_SCORE_CONFLICT, "Score conflict"),
+    ]
+
+    STATUS_PENDING = "pending"
+    STATUS_SENT = "sent"
+    STATUS_FAILED = "failed"
+    STATUS_SKIPPED = "skipped"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_SENT, "Sent"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_SKIPPED, "Skipped"),
+    ]
+
+    event = models.ForeignKey(WorkflowEvent, on_delete=models.PROTECT, related_name="email_deliveries")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="email_notification_deliveries",
+    )
+    notification_type = models.CharField(max_length=40, choices=TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    last_error = models.CharField(max_length=160, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["event", "user"], name="unique_email_delivery_event_user")]
+        indexes = [models.Index(fields=["status", "created_at"], name="email_delivery_status_idx")]
+
+    def __str__(self):
+        return f"{self.get_notification_type_display()} email to user {self.user_id}: {self.status}"

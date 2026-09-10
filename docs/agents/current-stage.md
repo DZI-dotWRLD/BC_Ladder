@@ -25,8 +25,10 @@ Build one reviewable frontend outcome through sequential coherent commits:
 
 Preserve Django templates, forms, sessions, CSRF, redirects, and server-owned
 domain rules. Use small progressive JavaScript only where it materially improves
-the interaction. Defer React, a separate frontend application, email delivery,
-a notification inbox, a visual availability planner, and new domain features.
+the interaction. Defer React, a separate frontend application, a notification
+inbox, a visual availability planner, and new domain features. Transactional
+email delivery for match requests and score conflicts is an owner-approved
+exception implemented outside the frontend pilot slice.
 
 ### Frontend gate
 

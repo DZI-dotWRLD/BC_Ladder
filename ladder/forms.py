@@ -64,11 +64,15 @@ class ProfileSetupForm(forms.ModelForm):
 
 
 class PlayerRegistrationForm(UserCreationForm):
+    email = forms.EmailField(help_text="Used for match requests and other important ladder notifications.")
     gender = forms.ChoiceField(choices=PlayerProfile.GENDER_CHOICES)
 
     class Meta:
         model = get_user_model()
-        fields = ("username", "gender", "password1", "password2")
+        fields = ("username", "email", "gender", "password1", "password2")
+
+    def clean_email(self):
+        return self.cleaned_data["email"].strip().lower()
 
 
 class ScoreSubmissionForm(forms.Form):

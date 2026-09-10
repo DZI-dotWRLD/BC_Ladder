@@ -28,6 +28,10 @@ def env_bool(name, default=False):
     return os.environ.get(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name, default):
+    return int(os.environ.get(name, str(default)))
+
+
 def env_list(name, default=""):
     return csv_list(os.environ.get(name, default))
 
@@ -200,6 +204,18 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
 SECURE_HSTS_PRELOAD = env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
 SECURE_REFERRER_POLICY = os.environ.get("DJANGO_SECURE_REFERRER_POLICY", "same-origin")
 LOG_LEVEL = os.environ.get("DJANGO_LOG_LEVEL", "INFO")
+
+# Django's SMTP backend works with Gmail app passwords and keeps the application
+# independent of a specific provider. Development remains non-delivering by default.
+EMAIL_BACKEND = os.environ.get("DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+EMAIL_HOST = os.environ.get("DJANGO_EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = env_int("DJANGO_EMAIL_PORT", 587)
+EMAIL_HOST_USER = os.environ.get("DJANGO_EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("DJANGO_EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("DJANGO_EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = env_bool("DJANGO_EMAIL_USE_SSL", False)
+EMAIL_TIMEOUT = env_int("DJANGO_EMAIL_TIMEOUT", 10)
+DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "BC Ladder <noreply@localhost>")
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

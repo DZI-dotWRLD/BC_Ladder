@@ -17,6 +17,13 @@ DJANGO_SECURE_SSL_REDIRECT=true
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_LOG_LEVEL=INFO
+DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+DJANGO_EMAIL_HOST=smtp.gmail.com
+DJANGO_EMAIL_PORT=587
+DJANGO_EMAIL_HOST_USER=<gmail-sender-address>
+DJANGO_EMAIL_HOST_PASSWORD=<gmail-app-password>
+DJANGO_EMAIL_USE_TLS=true
+DJANGO_DEFAULT_FROM_EMAIL=BC Ladder <gmail-sender-address>
 ```
 
 `DATABASE_URL` is preferred for Render and other platforms that provide one
@@ -29,6 +36,28 @@ PostgreSQL's default port.
 `DJANGO_CSRF_TRUSTED_ORIGINS` may be omitted for a same-origin deployment. If
 set, every entry must be an explicit HTTPS origin. Do not use local development
 origins or wildcards in production.
+
+For Gmail SMTP, enable 2-Step Verification on the sender account and create an
+app password. Store it only in the hosting provider's secret environment
+settings. Do not commit it or use the account's normal password. Gmail API was
+considered, but SMTP through Django is the initial provider seam because it
+does not require OAuth token storage or extra Google client dependencies.
+
+Notification rows are committed before delivery starts. A transient provider
+failure does not roll back a match request or score conflict. Retry pending and
+failed rows with:
+
+```powershell
+.\venv\Scripts\python.exe manage.py send_notification_emails --retry-failed
+```
+
+Schedule that command through the deployment platform for recovery after a
+process interruption. Rows skipped because a user has no valid email address
+require correcting the user's email, then running:
+
+```powershell
+.\venv\Scripts\python.exe manage.py send_notification_emails --retry-skipped
+```
 
 If the app is behind a trusted proxy or load balancer that terminates TLS, also
 set both proxy variables:
