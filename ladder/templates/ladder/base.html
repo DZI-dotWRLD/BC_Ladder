@@ -5,39 +5,49 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}BC Ladder{% endblock %}</title>
-    <link rel="stylesheet" href="{% static 'ladder/app.css' %}">
+    <link rel="stylesheet" href="{% static 'ladder/app.css' %}?v=phase-b1-dashboard-1">
+    <script src="{% static 'ladder/app.js' %}?v=phase-b1-dashboard-1" defer></script>
 </head>
 <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="site-header">
         <div class="wrap topbar">
-            <div>
-                <strong class="brand">BC Tennis Ladder</strong>
-                {% if user.is_authenticated %}<div class="header-user">{{ user.username }}</div>{% endif %}
+            <div class="site-identity">
+                <a class="brand" href="{% if user.is_authenticated %}{% url 'ladder:dashboard' %}{% else %}{% url 'ladder:login' %}{% endif %}">BC Tennis Ladder</a>
             </div>
-            <nav class="main-nav" aria-label="Main">
-                {% if user.is_authenticated %}
-                    <a href="{% url 'ladder:dashboard' %}">Dashboard</a>
-                    <a href="{% url 'ladder:team' %}">Team</a>
-                    <a href="{% url 'ladder:availability' %}">Availability</a>
-                    <a href="{% url 'ladder:suggestions' %}">Suggestions</a>
-                    <a href="{% url 'ladder:matches' %}">Matches</a>
-                    <a href="{% url 'ladder:ladder' 'mens' %}">Men's Ladder</a>
-                    <a href="{% url 'ladder:ladder' 'womens' %}">Women's Ladder</a>
-                    <form class="inline-form" method="post" action="{% url 'ladder:logout' %}">
-                        {% csrf_token %}
-                        <button class="logout-button" type="submit">Log out</button>
-                    </form>
-                {% else %}
-                    <a href="{% url 'ladder:login' %}">Log in</a>
-                {% endif %}
-            </nav>
+            {% if user.is_authenticated %}<div class="header-user">Welcome, {{ user.username }}</div>{% endif %}
+        </div>
+        <div class="nav-band">
+            <div class="wrap nav-shell">
+                <details class="nav-disclosure" open>
+                    <summary>Menu</summary>
+                    <nav class="main-nav" aria-label="Main navigation">
+                    {% if user.is_authenticated %}
+                        <a href="{% url 'ladder:dashboard' %}"{% if request.resolver_match.url_name == "dashboard" %} aria-current="page"{% endif %}>Dashboard</a>
+                        <a href="{% url 'ladder:team' %}"{% if request.resolver_match.url_name == "team" %} aria-current="page"{% endif %}>Team</a>
+                        <a href="{% url 'ladder:availability' %}"{% if request.resolver_match.url_name == "availability" or request.resolver_match.url_name == "cancel_availability" %} aria-current="page"{% endif %}>Availability</a>
+                        <a href="{% url 'ladder:suggestions' %}"{% if request.resolver_match.url_name == "suggestions" or request.resolver_match.url_name == "create_suggestion" or request.resolver_match.url_name == "accept_suggestion" %} aria-current="page"{% endif %}>Suggestions</a>
+                        <a href="{% url 'ladder:matches' %}"{% if request.resolver_match.url_name == "matches" or request.resolver_match.url_name == "match_detail" or request.resolver_match.url_name == "cancel_match" or request.resolver_match.url_name == "submit_score" %} aria-current="page"{% endif %}>Matches</a>
+                        <a href="{% url 'ladder:ladder' 'mens' %}"{% if request.resolver_match.url_name == "ladder" and request.resolver_match.kwargs.division == "mens" %} aria-current="page"{% endif %}>Men's Ladder</a>
+                        <a href="{% url 'ladder:ladder' 'womens' %}"{% if request.resolver_match.url_name == "ladder" and request.resolver_match.kwargs.division == "womens" %} aria-current="page"{% endif %}>Women's Ladder</a>
+                        <form class="inline-form" method="post" action="{% url 'ladder:logout' %}">
+                            {% csrf_token %}
+                            <button class="logout-button" type="submit">Log out</button>
+                        </form>
+                    {% else %}
+                        <a href="{% url 'ladder:login' %}"{% if request.resolver_match.url_name == "login" %} aria-current="page"{% endif %}>Log in</a>
+                        <a href="{% url 'ladder:register' %}"{% if request.resolver_match.url_name == "register" %} aria-current="page"{% endif %}>Create account</a>
+                    {% endif %}
+                    </nav>
+                </details>
+            </div>
         </div>
     </header>
-    <main class="wrap page-shell">
+    <main class="wrap page-shell {% block main_class %}{% endblock %}" id="main-content" tabindex="-1">
         {% if messages %}
-            <div class="messages">
+            <div class="messages" aria-label="Notifications">
                 {% for message in messages %}
-                    <div class="message {{ message.tags }}">{{ message }}</div>
+                    <div class="message {{ message.tags }}"{% if "error" in message.tags %} role="alert"{% else %} role="status"{% endif %}>{{ message }}</div>
                 {% endfor %}
             </div>
         {% endif %}

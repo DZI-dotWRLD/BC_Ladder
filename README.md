@@ -48,6 +48,7 @@ instead of creating duplicates.
 ```text
 /accounts/login/
 /accounts/register/
+/accounts/password-reset/
 /profile/setup/
 /
 /team/
@@ -133,6 +134,11 @@ DATABASE_URL
 DJANGO_SECURE_SSL_REDIRECT=true
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
+DJANGO_EMAIL_HOST
+DJANGO_EMAIL_PORT
+DJANGO_EMAIL_HOST_USER
+DJANGO_EMAIL_HOST_PASSWORD
+DJANGO_DEFAULT_FROM_EMAIL
 ```
 
 Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
@@ -151,6 +157,15 @@ are not configured.
 If `DJANGO_CSRF_TRUSTED_ORIGINS` is set in production, use explicit `https://`
 origins only; local development origins and wildcards are rejected.
 
+Password recovery uses Django's signed, one-time reset links. New registrations
+must include a unique email address. Existing accounts without an email need an
+administrator to add one before those players can recover their passwords.
+Development writes reset messages to the console. In production, configure the
+SMTP variables shown in `.env.example`; use `DJANGO_EMAIL_USE_TLS=true` for
+STARTTLS (commonly port 587) or `DJANGO_EMAIL_USE_SSL=true` for implicit TLS
+(commonly port 465), but never both. Reset links expire after one hour by
+default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
+
 ## Current Limitations
 
 - SQLite is supported for local development. PostgreSQL is configured in CI for
@@ -167,14 +182,8 @@ origins only; local development origins and wildcards are rejected.
 - The UI is server-rendered and intentionally lightweight. It is ready for club
   review, not final brand polish.
 
-## Phase B Checklist
+## Current Project Stage
 
-- Render web service and Render PostgreSQL deployment trial.
-- Broader PostgreSQL-specific transaction/concurrency coverage.
-- Data audit before production migration to confirm no existing overlapping
-  active availability or active reservation rows.
-- Deployment secret management and production host configuration.
-- Static-file hosting.
-- HTTPS, secure cookies, trusted proxy settings, and staged HSTS.
-- Backups, restore testing, monitoring, and structured logging.
-- Dependency/security scanning.
+The locked frontend-pilot and deployment sequence lives in
+[docs/agents/current-stage.md](docs/agents/current-stage.md). Keep that roadmap
+as the single source of truth instead of duplicating a phase checklist here.

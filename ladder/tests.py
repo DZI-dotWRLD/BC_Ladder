@@ -4,13 +4,17 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, connection, transaction
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from config.settings import DEVELOPMENT_SECRET_KEY, build_allowed_hosts, build_database_config, production_settings_errors
 
@@ -1311,6 +1315,7 @@ class PhaseARequestTests(TestCase):
             reverse("ladder:register"),
             {
                 "username": "new-register",
+                "email": "New.Player@Example.com",
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -1320,7 +1325,26 @@ class PhaseARequestTests(TestCase):
         user = get_user_model().objects.get(username="new-register")
         self.assertRedirects(response, reverse("ladder:dashboard"))
         self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
+        self.assertEqual(user.email, "new.player@example.com")
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_self_registration_rejects_an_email_already_in_use(self):
+        get_user_model().objects.create_user(username="existing", email="player@example.com", password="pass")
+
+        response = self.client.post(
+            reverse("ladder:register"),
+            {
+                "username": "duplicate-email",
+                "email": "PLAYER@example.com",
+                "gender": PlayerProfile.GENDER_FEMALE,
+                "password1": "StrongPass123!",
+                "password2": "StrongPass123!",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "An account with this email address already exists.")
+        self.assertFalse(get_user_model().objects.filter(username="duplicate-email").exists())
 
     def test_dashboard_redirects_user_without_profile_to_setup(self):
         user = get_user_model().objects.create_user(username="needs-profile", password="pass")
@@ -1352,6 +1376,33 @@ class PhaseARequestTests(TestCase):
         self.assertContains(response, "Manual setup")
         self.assertContains(response, "Start here")
         self.assertContains(response, team.name)
+        self.assertContains(response, 'class="dashboard-match-board"')
+        self.assertContains(response, "This week")
+        self.assertContains(response, "Current suggestions")
+        self.assertContains(response, "tennis-net-cal-gao.jpg")
+
+    def test_shared_shell_supports_skip_navigation_and_marks_current_page(self):
+        _team, players = self.create_team_with_members("shell-navigation", 1)
+        self.client.force_login(players[0].user)
+
+        dashboard_response = self.client.get(reverse("ladder:dashboard"))
+        team_response = self.client.get(reverse("ladder:team"))
+
+        self.assertContains(dashboard_response, 'class="skip-link" href="#main-content"')
+        self.assertContains(dashboard_response, 'id="main-content" tabindex="-1"')
+        self.assertContains(dashboard_response, "<summary>Menu</summary>", html=True)
+        self.assertContains(
+            dashboard_response,
+            f'href="{reverse("ladder:dashboard")}" aria-current="page"',
+        )
+        self.assertNotContains(
+            dashboard_response,
+            f'href="{reverse("ladder:team")}" aria-current="page"',
+        )
+        self.assertContains(
+            team_response,
+            f'href="{reverse("ladder:team")}" aria-current="page"',
+        )
 
     def test_dashboard_setup_checklist_shows_pending_join_request(self):
         profile = self.create_profile("dashboard-pending")
@@ -2267,6 +2318,95 @@ class DataIntegrityAuditCommandTests(TestCase):
             call_command("audit_data_integrity", stdout=output)
 
         self.assertIn("result.submission_match_mismatch", output.getvalue())
+
+
+class PasswordResetRequestTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="recovering-player",
+            email="player@example.com",
+            password="OldStrongPass123!",
+        )
+        PlayerProfile.objects.create(user=self.user, gender=PlayerProfile.GENDER_MALE)
+
+    def test_login_page_links_to_password_reset(self):
+        response = self.client.get(reverse("ladder:login"))
+
+        self.assertContains(response, reverse("ladder:password_reset"))
+        self.assertContains(response, "Forgot your password?")
+
+    def test_known_email_sends_one_reset_message_without_exposing_username(self):
+        response = self.client.post(reverse("ladder:password_reset"), {"email": "PLAYER@example.com"})
+
+        self.assertRedirects(response, reverse("ladder:password_reset_done"))
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, ["player@example.com"])
+        self.assertEqual(message.subject, "Reset your BC Tennis Ladder password")
+        self.assertNotIn(self.user.username, message.body)
+        self.assertIn("http://testserver/accounts/reset/", message.body)
+
+    def test_unknown_and_inactive_accounts_receive_same_response_without_email(self):
+        unknown_response = self.client.post(reverse("ladder:password_reset"), {"email": "unknown@example.com"})
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        inactive_response = self.client.post(reverse("ladder:password_reset"), {"email": self.user.email})
+
+        self.assertRedirects(unknown_response, reverse("ladder:password_reset_done"))
+        self.assertRedirects(inactive_response, reverse("ladder:password_reset_done"))
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_password_reset_request_requires_csrf_token(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+
+        response = csrf_client.post(reverse("ladder:password_reset"), {"email": self.user.email})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_valid_token_replaces_password_and_cannot_be_reused(self):
+        uidb64 = urlsafe_base64_encode(force_bytes(self.user.pk))
+        token = default_token_generator.make_token(self.user)
+        token_url = reverse(
+            "ladder:password_reset_confirm",
+            kwargs={"uidb64": uidb64, "token": token},
+        )
+
+        response = self.client.get(token_url)
+        self.assertRedirects(response, token_url.replace(token, "set-password"))
+
+        response = self.client.post(
+            token_url.replace(token, "set-password"),
+            {
+                "new_password1": "NewStrongPass456!",
+                "new_password2": "NewStrongPass456!",
+            },
+        )
+
+        self.assertRedirects(response, reverse("ladder:password_reset_complete"))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("NewStrongPass456!"))
+        self.assertFalse(default_token_generator.check_token(self.user, token))
+
+        login_response = self.client.post(
+            reverse("ladder:login"),
+            {"username": self.user.username, "password": "NewStrongPass456!"},
+        )
+        self.assertRedirects(login_response, reverse("ladder:dashboard"))
+
+    def test_invalid_token_does_not_show_password_form(self):
+        uidb64 = urlsafe_base64_encode(force_bytes(self.user.pk))
+
+        response = self.client.get(
+            reverse(
+                "ladder:password_reset_confirm",
+                kwargs={"uidb64": uidb64, "token": "invalid-token"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This password reset link is invalid or has expired.")
+        self.assertNotContains(response, 'name="new_password1"')
 
 
 class ProductionSettingsValidationTests(TestCase):

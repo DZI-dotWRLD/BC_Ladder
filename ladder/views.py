@@ -292,7 +292,27 @@ def dashboard(request):
     availability = active_availability.order_by("starts_at")[:5]
     suggestions_qs = MatchSuggestion.objects.none()
     matches_qs = _player_match_queryset(profile)
-    matches = matches_qs[:5]
+    next_match = (
+        matches_qs.filter(
+            status=Match.STATUS_SCHEDULED,
+            scheduled_starts_at__gte=timezone.now(),
+        )
+        .order_by("scheduled_starts_at", "id")
+        .first()
+    )
+    if next_match is None:
+        next_match = (
+            matches_qs.filter(status=Match.STATUS_SCHEDULED, scheduled_starts_at__isnull=False)
+            .order_by("scheduled_starts_at", "id")
+            .first()
+        )
+    match_participants = sorted(
+        next_match.participants.all() if next_match else [],
+        key=lambda participant: (participant.side, participant.lineup_order, participant.id),
+    )
+    team_a_players = [participant for participant in match_participants if participant.side == "a"]
+    team_b_players = [participant for participant in match_participants if participant.side == "b"]
+    standing = LadderStanding.objects.filter(team=team).first() if team else None
     if team:
         suggestions_qs = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
@@ -307,6 +327,7 @@ def dashboard(request):
         suggestions_qs.count(),
         matches_qs.count(),
     )
+    needs_setup = any(not step["complete"] for step in setup_steps)
     return render(
         request,
         "ladder/dashboard.html",
@@ -315,8 +336,12 @@ def dashboard(request):
             "team": team,
             "availability": availability,
             "suggestions": suggestions_qs,
-            "matches": matches,
+            "next_match": next_match,
+            "next_match_team_a_players": team_a_players,
+            "next_match_team_b_players": team_b_players,
+            "standing": standing,
             "setup_steps": setup_steps,
+            "needs_setup": needs_setup,
         },
     )
 
