@@ -17,6 +17,12 @@ DJANGO_SECURE_SSL_REDIRECT=true
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_LOG_LEVEL=INFO
+DJANGO_EMAIL_HOST=smtp.example.com
+DJANGO_EMAIL_PORT=587
+DJANGO_EMAIL_HOST_USER=<smtp-username>
+DJANGO_EMAIL_HOST_PASSWORD=<smtp-password>
+DJANGO_EMAIL_USE_TLS=true
+DJANGO_DEFAULT_FROM_EMAIL=BC Tennis Ladder <no-reply@example.com>
 ```
 
 `DATABASE_URL` is preferred for Render and other platforms that provide one
@@ -29,6 +35,13 @@ PostgreSQL's default port.
 `DJANGO_CSRF_TRUSTED_ORIGINS` may be omitted for a same-origin deployment. If
 set, every entry must be an explicit HTTPS origin. Do not use local development
 origins or wildcards in production.
+
+Password recovery requires a working SMTP account in every deployed
+environment. Keep its credentials in the hosting provider's secret store, not
+in source control. The example uses STARTTLS on port 587; for implicit TLS on
+port 465, set `DJANGO_EMAIL_USE_TLS=false` and `DJANGO_EMAIL_USE_SSL=true`.
+Verify the sender in your email provider before launch. Accounts created before
+email capture was added need an administrator to set a unique email address.
 
 If the app is behind a trusted proxy or load balancer that terminates TLS, also
 set both proxy variables:
@@ -112,6 +125,7 @@ After deploy:
 ```text
 GET /health/ -> 200 {"status": "ok"}
 GET /accounts/login/ -> 200
+GET /accounts/password-reset/ -> 200
 GET /ladders/mens/ as an authenticated user -> 200
 GET /ladders/womens/ as an authenticated user -> 200
 ```

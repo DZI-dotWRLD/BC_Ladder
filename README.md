@@ -48,6 +48,7 @@ instead of creating duplicates.
 ```text
 /accounts/login/
 /accounts/register/
+/accounts/password-reset/
 /profile/setup/
 /
 /team/
@@ -133,6 +134,11 @@ DATABASE_URL
 DJANGO_SECURE_SSL_REDIRECT=true
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
+DJANGO_EMAIL_HOST
+DJANGO_EMAIL_PORT
+DJANGO_EMAIL_HOST_USER
+DJANGO_EMAIL_HOST_PASSWORD
+DJANGO_DEFAULT_FROM_EMAIL
 ```
 
 Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
@@ -150,6 +156,15 @@ allowed hosts, PostgreSQL database settings, secure cookies, and HTTPS redirect
 are not configured.
 If `DJANGO_CSRF_TRUSTED_ORIGINS` is set in production, use explicit `https://`
 origins only; local development origins and wildcards are rejected.
+
+Password recovery uses Django's signed, one-time reset links. New registrations
+must include a unique email address. Existing accounts without an email need an
+administrator to add one before those players can recover their passwords.
+Development writes reset messages to the console. In production, configure the
+SMTP variables shown in `.env.example`; use `DJANGO_EMAIL_USE_TLS=true` for
+STARTTLS (commonly port 587) or `DJANGO_EMAIL_USE_SSL=true` for implicit TLS
+(commonly port 465), but never both. Reset links expire after one hour by
+default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
 
 ## Current Limitations
 

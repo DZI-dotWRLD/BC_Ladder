@@ -64,11 +64,21 @@ class ProfileSetupForm(forms.ModelForm):
 
 
 class PlayerRegistrationForm(UserCreationForm):
+    email = forms.EmailField(
+        help_text="Used only for account recovery.",
+        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+    )
     gender = forms.ChoiceField(choices=PlayerProfile.GENDER_CHOICES)
 
     class Meta:
         model = get_user_model()
-        fields = ("username", "gender", "password1", "password2")
+        fields = ("username", "email", "gender", "password1", "password2")
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip().lower()
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email address already exists.")
+        return email
 
 
 class ScoreSubmissionForm(forms.Form):

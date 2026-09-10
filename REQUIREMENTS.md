@@ -152,6 +152,18 @@ email addresses, unnecessary usernames, and arbitrary request data.
   and duplicate side effects.
 - Keep secrets and unnecessary personal data out of source control and logs.
 
+### Password recovery
+
+- New self-registered accounts require a normalized email address that is not
+  already used by another account. Existing accounts without an email require
+  administrator remediation before password recovery is available.
+- Public recovery requests use Django's signed, expiring, one-time reset links.
+  Only active users with usable passwords receive a message.
+- The request flow returns the same confirmation for known, unknown, inactive,
+  and unusable accounts so it does not disclose account existence.
+- Reset delivery is limited to account-recovery email and does not create a
+  workflow event or establish a general notification-delivery channel.
+
 ### Architecture and performance
 
 - Keep domain rules in explicit services, views thin, forms responsible for
@@ -180,5 +192,5 @@ Read the current implementation or obtain owner approval before changing:
 - club timezone and availability granularity;
 - captain permissions;
 - notification delivery channels and provider;
-- password-recovery and richer score-correction policy; and
+- richer score-correction policy; and
 - long-term production hosting, retention, backup, and monitoring policy.
