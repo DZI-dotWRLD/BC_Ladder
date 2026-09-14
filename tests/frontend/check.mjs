@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
-import { chromium } from 'playwright';
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 // Run only against an isolated database populated by the existing seed_demo command.
-const base = 'http://127.0.0.1:8001';
+const base = process.env.FRONTEND_BASE_URL || 'http://127.0.0.1:8001';
 const output = 'output/playwright/ci';
 await mkdir(output, { recursive: true });
 for (let attempt = 0; ; attempt++) {
@@ -58,6 +58,7 @@ try {
     for (const width of [320, 390, 768, 1024, 1440]) {
         await page.setViewportSize({ width, height: 900 });
         await visit('/');
+        await page.locator('#team').scrollIntoViewIfNeeded();
         await page.locator('#team [data-fragment="team"]').waitFor();
         await layout('dashboard', width);
         const card = page.locator('.dashboard-match-board');
@@ -73,6 +74,7 @@ try {
         for (const path of ['/availability/', '/suggestions/', '/matches/']) {
             await visit(path);
             for (const fragment of ['availability', 'suggestions', 'matches']) {
+                await page.locator(`#${fragment}`).scrollIntoViewIfNeeded();
                 await page.locator(`[data-fragment="${fragment}"]`).waitFor();
             }
             assert.equal(await page.locator('.availability-form').count(), 1);
@@ -102,6 +104,7 @@ try {
     // Progressive enhancement must retain useful fallback links when composition fails.
     await page.route('**/suggestions/', route => route.abort());
     await visit('/availability/');
+    await page.locator('#suggestions').scrollIntoViewIfNeeded();
     await page.locator('#suggestions [data-compose-status]').filter({ hasText: 'could not load' }).waitFor();
     assert.equal(await page.locator('#suggestions a[href="/suggestions/"]').count(), 1);
     await page.unroute('**/suggestions/');
@@ -111,6 +114,39 @@ try {
     assert.equal(await fallback.locator('.availability-form input[name=csrfmiddlewaretoken]').count(), 1);
     assert.equal(await fallback.locator('#suggestions a[href="/suggestions/"]').count(), 1);
     await noJS.close();
+    // Native keyboard navigation reaches the skip link and content landmark.
+    await visit('/');
+    await page.keyboard.press('Tab');
+    assert.match(await page.locator(':focus').innerText(), /Skip to/);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator(':focus').getAttribute('id'), 'main-content');
+    // Exercise a selected participant's real score POST and waiting state.
+    await visit('/matches/');
+    await page.getByRole('link', { name: 'Enter score', exact: true }).first().click();
+    const scorecardURL = page.url();
+    const opponentUsername = (await page.locator('.panel').first().innerText()).match(/demo-mens-[3-8]/)?.[0];
+    assert.ok(opponentUsername, 'Selected opponent recorded on scorecard');
+    for (const [name, value] of Object.entries({ set1_team_a: '6', set1_team_b: '4', set2_team_a: '6', set2_team_b: '3' })) {
+        await page.locator(`[name=${name}]`).fill(value);
+    }
+    await page.getByRole('button', { name: 'Submit score', exact: true }).click();
+    await page.getByText('Your team submitted its score. Waiting for the opponent.', { exact: true }).waitFor();
+    assert.equal(await page.locator('#score-submission').count(), 0);
+    const opponentContext = await browser.newContext();
+    const opponentPage = await opponentContext.newPage();
+    await opponentPage.goto(`${base}/accounts/login/`);
+    await opponentPage.locator('[name=username]').fill(opponentUsername);
+    await opponentPage.locator('[name=password]').fill('DemoPass123!');
+    await opponentPage.locator('form').filter({ has: opponentPage.locator('[name=password]') }).locator('button[type=submit]').click();
+    await opponentPage.waitForURL(`${base}/`);
+    await opponentPage.goto(scorecardURL);
+    await opponentPage.getByText('Opponent score received. Your team needs to submit its score.', { exact: true }).waitFor();
+    for (const [name, value] of Object.entries({ set1_team_a: '6', set1_team_b: '4', set2_team_a: '6', set2_team_b: '3' })) {
+        await opponentPage.locator(`[name=${name}]`).fill(value);
+    }
+    await opponentPage.getByRole('button', { name: 'Submit score', exact: true }).click();
+    await opponentPage.getByRole('heading', { name: 'Official score', exact: true }).waitFor();
+    await opponentContext.close();
     assert.deepEqual(errors, [], 'Browser or HTTP errors');
     console.log('Frontend checks passed: five viewport sizes, public/private routes, composition, links, CSRF and invalid form submission.');
 } catch (error) {

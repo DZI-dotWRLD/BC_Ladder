@@ -1661,7 +1661,7 @@ class PhaseARequestTests(TestCase):
 
         one_member_team, one_member_players = self.create_team_with_members("suggestions-one-member", 1)
         self.client.force_login(one_member_players[0].user)
-        one_member_response = self.client.get(reverse("ladder:suggestions"))
+        one_member_response = self.client.get(reverse("ladder:suggestions"), {"discover": "1"})
 
         self.assertContains(no_team_response, "Join or create a team first")
         self.assertContains(no_team_response, "Suggestions require an active team")
@@ -1672,7 +1672,7 @@ class PhaseARequestTests(TestCase):
         _team_without_availability, no_availability_players = self.create_team_with_members("suggestions-no-availability", 2)
         self.client.force_login(no_availability_players[0].user)
 
-        no_availability_response = self.client.get(reverse("ladder:suggestions"))
+        no_availability_response = self.client.get(reverse("ladder:suggestions"), {"discover": "1"})
 
         no_shared_team, no_shared_players = self.create_team_with_members("suggestions-no-shared", 2)
         first_starts_at = timezone.now() + timedelta(days=7)
@@ -1681,7 +1681,7 @@ class PhaseARequestTests(TestCase):
         save_availability(no_shared_players[0].user, first_starts_at, first_starts_at + timedelta(hours=2))
         save_availability(no_shared_players[1].user, second_starts_at, second_starts_at + timedelta(hours=2))
         self.client.force_login(no_shared_players[0].user)
-        no_shared_response = self.client.get(reverse("ladder:suggestions"))
+        no_shared_response = self.client.get(reverse("ladder:suggestions"), {"discover": "1"})
 
         self.assertContains(no_availability_response, "No compatible suggestions yet.")
         self.assertNotContains(no_availability_response, ">Add active availability<")
@@ -1698,12 +1698,12 @@ class PhaseARequestTests(TestCase):
             save_availability(player.user, starts_at, ends_at)
         self.client.force_login(solo_players[0].user)
 
-        no_opponents_response = self.client.get(reverse("ladder:suggestions"))
+        no_opponents_response = self.client.get(reverse("ladder:suggestions"), {"discover": "1"})
 
         opponent_team, opponent_players = self.create_team_with_members("suggestions-opponent", 2)
         for player in opponent_players:
             save_availability(player.user, starts_at, ends_at)
-        valid_response = self.client.get(reverse("ladder:suggestions"))
+        valid_response = self.client.get(reverse("ladder:suggestions"), {"discover": "1"})
 
         self.assertContains(no_opponents_response, "No opponent teams in this ladder yet")
         self.assertContains(valid_response, solo_team.name)

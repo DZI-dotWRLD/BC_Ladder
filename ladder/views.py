@@ -4,7 +4,8 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
+from django.core.paginator import Paginator
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
@@ -82,10 +83,10 @@ def _player_match_queryset(profile):
         ownership_filter |= Q(team_a=team) | Q(team_b=team)
     return (
         Match.objects.filter(ownership_filter)
-        .select_related("team_a", "team_b")
+        .select_related("team_a", "team_b", "confirmed_result__winning_team", "confirmed_result__confirmed_from_submission")
         .prefetch_related("participants__player__user", "result_submissions__sets")
         .distinct()
-        .order_by("-scheduled_starts_at", "-scheduled_week_start_date", "-scheduled_start_time")
+        .order_by("-scheduled_starts_at", "-scheduled_week_start_date", "-scheduled_start_time", "-id")
     )
 
 
@@ -96,6 +97,35 @@ def _participant_match_queryset(profile):
         .prefetch_related("participants__player__user", "result_submissions__sets")
         .distinct()
     )
+
+
+def _match_presentation(match, profile):
+    participants = list(match.participants.all())
+    own_participant = next((item for item in participants if item.player_id == profile.id), None)
+    submissions = list(match.result_submissions.all())
+    own_submission = next((item for item in submissions if own_participant and item.submitting_team_id == own_participant.team_id), None)
+    official = getattr(match, "confirmed_result", None)
+    signatures = [
+        tuple((item.set_order, item.set_type, item.team_a_score, item.team_b_score) for item in submission.sets.all())
+        or (("legacy", submission.team_a_sets_won, submission.team_b_sets_won),)
+        for submission in submissions
+    ]
+    can_submit = bool(own_participant and match.status == Match.STATUS_SCHEDULED and not own_submission)
+    if match.status == Match.STATUS_CANCELLED:
+        note = "Cancelled — this booking remains in history."
+    elif official:
+        note = f"Official result: {official.winning_team.name} won."
+    elif len(signatures) >= 2 and signatures[0] != signatures[1]:
+        note = "Scores differ. An administrator is reviewing the official result."
+    elif not own_participant:
+        note = "Read-only: only selected match players can submit scores."
+    elif own_submission:
+        note = "Your team submitted its score. Waiting for the opponent."
+    elif submissions:
+        note = "Opponent score received. Your team needs to submit its score."
+    else:
+        note = "Your team needs to submit its score after playing."
+    return {"match": match, "can_submit": can_submit, "state_note": note, "own_submission": own_submission, "official_result": official}
 
 
 def _setup_steps_for_profile(profile, team, active_availability_count, suggestion_count, match_count):
@@ -523,21 +553,39 @@ def suggestions(request):
     ends_at = starts_at + timedelta(days=30)
     interval = (starts_at, ends_at)
     if team:
-        options = find_opponent_suggestions(team, interval)[:10]
-        for option in options:
-            option["candidate_token"] = sign_candidate(option, request.user)
+        if request.GET.get("discover") == "1":
+            options = find_opponent_suggestions(team, interval)[:10]
+            for option in options:
+                option["candidate_token"] = sign_candidate(option, request.user)
         existing = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
             .select_related("team_a", "team_b")
             .prefetch_related("participants__player__user", "acceptances")
-            .order_by("starts_at", "id")
+            .annotate(
+                open_priority=Case(
+                    When(status__in=[MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED], then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("open_priority", "starts_at", "id")
         )
-        existing_cards = _suggestion_cards(existing, profile, team)
-    empty_state = _suggestion_empty_state(profile, team, interval, options)
+        page = Paginator(existing, 20).get_page(request.GET.get("page"))
+        existing_cards = _suggestion_cards(page, profile, team)
+    else:
+        page = None
+    empty_state = _suggestion_empty_state(profile, team, interval, options) if not team or request.GET.get("discover") == "1" else None
     return render(
         request,
         "ladder/suggestions.html",
-        {"team": team, "options": options, "existing_cards": existing_cards, "empty_state": empty_state},
+        {
+            "team": team,
+            "options": options,
+            "existing_cards": existing_cards,
+            "empty_state": empty_state,
+            "page_obj": page,
+            "discovered": request.GET.get("discover") == "1",
+        },
     )
 
 
@@ -595,7 +643,9 @@ def match_history(request):
     profile = _profile_or_setup(request)
     if profile is None:
         return redirect("ladder:profile_setup")
-    return render(request, "ladder/matches.html", {"matches": _player_match_queryset(profile)})
+    page = Paginator(_player_match_queryset(profile), 20).get_page(request.GET.get("page"))
+    cards = [_match_presentation(match, profile) for match in page]
+    return render(request, "ladder/matches.html", {"matches": page, "match_cards": cards, "page_obj": page})
 
 
 @login_required
@@ -615,6 +665,7 @@ def match_detail(request, match_id):
             "score_form": ScoreSubmissionForm(),
             "is_selected_participant": is_selected_participant,
             "can_cancel": can_cancel,
+            **_match_presentation(match, profile),
         },
     )
 

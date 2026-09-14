@@ -1,0 +1,3 @@
+{% extends "ladder/base.html" %}
+{% block title %}Access denied | BC Ladder{% endblock %}
+{% block content %}<h1>Access denied</h1><p>You do not have permission to use this page or action.</p><a href="{% url 'ladder:dashboard' %}">Return to your dashboard</a>{% endblock %}
