@@ -1,8 +1,10 @@
 from collections import defaultdict
-from datetime import timedelta, timezone as datetime_timezone
+from bisect import bisect_left
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from itertools import combinations
 from zoneinfo import ZoneInfo
 
+from django.core import signing
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.utils import timezone
@@ -813,35 +815,145 @@ def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
     return match_options
 
 
+def _matchmaking_snapshot(team, interval):
+    teams = {item.id: item for item in Team.active.filter(division=team.division).select_related("standing").order_by("id")}
+    members = defaultdict(list)
+    for membership in (
+        TeamMembership.objects.filter(team_id__in=teams, status=TeamMembership.STATUS_ACTIVE)
+        .select_related("player__user")
+        .order_by("player_id")
+    ):
+        members[membership.team_id].append(membership.player)
+    player_ids = {player.id for players in members.values() for player in players}
+    slots = defaultdict(list)
+    for slot in AvailabilitySlot.objects.filter(
+        player_id__in=player_ids, status=AvailabilitySlot.STATUS_ACTIVE, starts_at__lt=interval[1], ends_at__gt=interval[0]
+    ).order_by("starts_at", "ends_at", "id"):
+        slots[slot.player_id].append(slot)
+    reservations = defaultdict(list)
+    for reservation in MatchReservation.objects.filter(
+        player_id__in=player_ids, status=MatchReservation.STATUS_ACTIVE, starts_at__lt=interval[1], ends_at__gt=interval[0]
+    ).order_by("starts_at", "ends_at"):
+        reservations[reservation.player_id].append((reservation.starts_at, reservation.ends_at))
+    reservation_index = {}
+    for player_id, windows in reservations.items():
+        starts, maximum_ends = [], []
+        for start, end in windows:
+            starts.append(start)
+            maximum_ends.append(max(end, maximum_ends[-1]) if maximum_ends else end)
+        reservation_index[player_id] = (starts, maximum_ends)
+    lineups = []
+    for team_id, players in members.items():
+        for one, two in combinations(players, 2):
+            for start, end, slot_one, slot_two in _intersect_sorted_slots(slots[one.id], slots[two.id]):
+                lineups.append(
+                    {
+                        "team": teams[team_id],
+                        "players": (one, two),
+                        "starts_at": start,
+                        "ends_at": end,
+                        "availability": {one.id: slot_one, two.id: slot_two},
+                    }
+                )
+    return teams, lineups, reservation_index
+
+
+def _snapshot_conflict(reservations, player_id, start, end):
+    starts, maximum_ends = reservations.get(player_id, ([], []))
+    index = bisect_left(starts, end) - 1
+    return index >= 0 and maximum_ends[index] > start
+
+
+def candidate_identity(option):
+    """Exact identity including source windows, not a position in a ranked list."""
+    return {
+        "teams": [option["team_a"].id, option["team_b"].id],
+        "players": [[player.id for player in option[key]] for key in ("team_a_players", "team_b_players")],
+        "start": option["starts_at"].isoformat(),
+        "end": option["ends_at"].isoformat(),
+        "slots": [
+            [player_id, slot.id, slot.starts_at.isoformat(), slot.ends_at.isoformat()]
+            for player_id, slot in sorted(option["availability"].items())
+        ],
+    }
+
+
+def sign_candidate(option, actor):
+    return signing.dumps(
+        {"actor": actor.pk, "candidate": candidate_identity(option)}, salt="ladder.matchmaking.candidate.v1", compress=True
+    )
+
+
+def create_match_suggestion_from_candidate(token, actor, team):
+    if not getattr(actor, "is_authenticated", False):
+        raise AuthorizationFailure("Authentication is required.")
+    try:
+        payload = signing.loads(token, salt="ladder.matchmaking.candidate.v1", max_age=1800)
+        identity = payload["candidate"]
+        if payload["actor"] != actor.pk or identity["teams"][0] != team.pk:
+            raise ValueError
+        interval = (datetime.fromisoformat(identity["start"]), datetime.fromisoformat(identity["end"]))
+        if interval[0] <= timezone.now():
+            raise ValueError
+    except signing.BadSignature, KeyError, TypeError, ValueError, IndexError:
+        raise InvalidInput("Suggestion option is no longer available. Refresh and choose again.") from None
+    with transaction.atomic():
+        # Serialize source-window edits with exact command validation and creation.
+        list(AvailabilitySlot.objects.select_for_update().filter(pk__in=[slot[1] for slot in identity["slots"]]).order_by("id"))
+        if not TeamMembership.objects.filter(team=team, player__user=actor, status=TeamMembership.STATUS_ACTIVE).exists():
+            raise AuthorizationFailure("Only active team members may request this match.")
+        for option in find_opponent_suggestions(team, interval):
+            if candidate_identity(option) == identity:
+                return create_match_suggestion(option, actor=actor)
+        raise InvalidInput("Suggestion option is no longer available. Refresh and choose again.")
+
+
 def find_opponent_suggestions(team, interval):
     if interval[0] >= interval[1]:
         raise InvalidInput("Search interval start must be before end.")
-    own_lineups = generate_team_lineups(team, interval)
-    opponents = Team.active.filter(division=team.division).exclude(pk=team.pk).order_by("id")
+    teams, lineups, reservations = _matchmaking_snapshot(team, interval)
+    if team.pk not in teams:
+        return []
+    team = teams[team.pk]
     options = []
-    for opponent in opponents:
-        for own in own_lineups:
-            for other in generate_team_lineups(opponent, (own["starts_at"], own["ends_at"])):
-                starts_at = max(own["starts_at"], other["starts_at"])
-                ends_at = min(own["ends_at"], other["ends_at"])
-                if starts_at >= ends_at:
-                    continue
-                player_ids = [player.id for player in own["players"] + other["players"]]
-                if len(set(player_ids)) != 4:
-                    continue
-                if _has_reservation_conflict(player_ids, starts_at, ends_at):
-                    continue
-                options.append(
-                    {
-                        "team_a": team,
-                        "team_b": opponent,
-                        "team_a_players": own["players"],
-                        "team_b_players": other["players"],
-                        "starts_at": starts_at,
-                        "ends_at": ends_at,
-                        "availability": {**own["availability"], **other["availability"]},
-                    }
-                )
+    # Temporal sweep buckets contain only overlapping lineups on the opposite side.
+    events = []
+    for index, lineup in enumerate(lineups):
+        events.extend(((lineup["starts_at"], 1, index), (lineup["ends_at"], 0, index)))
+    active = {True: {}, False: {}}
+    seen = set()
+    for _, beginning, index in sorted(events):
+        lineup = lineups[index]
+        own_side = lineup["team"].pk == team.pk
+        if not beginning:
+            active[own_side].pop(index, None)
+            continue
+        for opposite in active[not own_side].values():
+            own, other = (lineup, opposite) if own_side else (opposite, lineup)
+            opponent = other["team"]
+            starts_at = max(own["starts_at"], other["starts_at"])
+            ends_at = min(own["ends_at"], other["ends_at"])
+            if starts_at >= ends_at:
+                continue
+            player_ids = [player.id for player in own["players"] + other["players"]]
+            if len(set(player_ids)) != 4:
+                continue
+            if any(_snapshot_conflict(reservations, player_id, starts_at, ends_at) for player_id in player_ids):
+                continue
+            option = {
+                "team_a": team,
+                "team_b": opponent,
+                "team_a_players": own["players"],
+                "team_b_players": other["players"],
+                "starts_at": starts_at,
+                "ends_at": ends_at,
+                "availability": {**own["availability"], **other["availability"]},
+            }
+            identity = str(candidate_identity(option))
+            if identity not in seen:
+                seen.add(identity)
+                options.append(option)
+        active[own_side][index] = lineup
     return sorted(
         options,
         key=lambda item: (
@@ -852,6 +964,8 @@ def find_opponent_suggestions(team, interval):
             item["team_b"].id,
             [player.id for player in item["team_a_players"]],
             [player.id for player in item["team_b_players"]],
+            item["ends_at"],
+            [slot.id for _, slot in sorted(item["availability"].items())],
         ),
     )
 

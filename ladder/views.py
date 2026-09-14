@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from .forms import (
     AvailabilityForm,
+    CandidateCommandForm,
     PlayerRegistrationForm,
     ProfileSetupForm,
     ScoreSubmissionForm,
@@ -34,13 +35,14 @@ from .services import (
     cancel_availability,
     cancel_join_request,
     cancel_match,
-    create_match_suggestion,
+    create_match_suggestion_from_candidate,
     create_team_for_player,
     find_opponent_suggestions,
     generate_team_lineups,
     get_match_status,
     request_membership_change,
     save_availability,
+    sign_candidate,
     submit_match_result,
 )
 
@@ -522,6 +524,8 @@ def suggestions(request):
     interval = (starts_at, ends_at)
     if team:
         options = find_opponent_suggestions(team, interval)[:10]
+        for option in options:
+            option["candidate_token"] = sign_candidate(option, request.user)
         existing = (
             MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
             .select_related("team_a", "team_b")
@@ -539,6 +543,7 @@ def suggestions(request):
 
 @login_required
 def create_suggestion_view(request, option_index):
+    # Legacy URL argument is presentation-only; never reselect a ranked list index.
     if request.method != "POST":
         return redirect("ladder:suggestions")
     profile = _profile_or_setup(request)
@@ -549,17 +554,13 @@ def create_suggestion_view(request, option_index):
         messages.error(request, "Join a team before creating suggestions.")
         return redirect("ladder:suggestions")
 
-    starts_at = timezone.now()
-    ends_at = starts_at + timedelta(days=30)
-    options = find_opponent_suggestions(team, (starts_at, ends_at))[:10]
-    try:
-        option = options[option_index]
-    except IndexError:
+    form = CandidateCommandForm(request.POST)
+    if not form.is_valid():
         messages.error(request, "Suggestion option is no longer available.")
         return redirect("ladder:suggestions")
 
     try:
-        create_match_suggestion(option, actor=request.user)
+        create_match_suggestion_from_candidate(form.cleaned_data["candidate"], request.user, team)
         messages.success(request, "Suggestion created.")
     except DomainError as error:
         _message_domain_error(request, error)

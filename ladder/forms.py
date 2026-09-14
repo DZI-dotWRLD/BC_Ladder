@@ -11,6 +11,10 @@ class SuggestionAcceptanceForm(forms.Form):
     version = forms.IntegerField(min_value=1, max_value=2147483647)
 
 
+class CandidateCommandForm(forms.Form):
+    candidate = forms.CharField(max_length=8192, widget=forms.HiddenInput)
+
+
 class AvailabilityForm(forms.Form):
     starts_at = forms.DateTimeField(
         input_formats=["%Y-%m-%dT%H:%M"],
