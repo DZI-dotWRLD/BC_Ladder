@@ -3,6 +3,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import get_user_model
 
 from .models import PlayerProfile, Team
+from .registration import EMAIL_CONFLICT, users_with_email
 from .services import CLUB_TIMEZONE
 
 
@@ -80,8 +81,8 @@ class PlayerRegistrationForm(UserCreationForm):
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()
-        if get_user_model().objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError("An account with this email address already exists.")
+        if users_with_email(email).exists():
+            raise forms.ValidationError(EMAIL_CONFLICT)
         return email
 
 

@@ -27,6 +27,7 @@ from .models import (
     Team,
     TeamMembership,
 )
+from .registration import RegistrationConflict, register_player
 from .services import (
     DomainError,
     accept_suggestion,
@@ -267,11 +268,14 @@ def register(request):
         return redirect("ladder:dashboard")
     form = PlayerRegistrationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        user = form.save()
-        PlayerProfile.objects.create(user=user, gender=form.cleaned_data["gender"])
-        login(request, user)
-        messages.success(request, "Account created.")
-        return redirect("ladder:dashboard")
+        try:
+            user = register_player(form)
+        except RegistrationConflict as exc:
+            form.add_error(exc.field, str(exc))
+        else:
+            login(request, user)
+            messages.success(request, "Account created.")
+            return redirect("ladder:dashboard")
     return render(request, "registration/register.html", {"form": form})
 
 
