@@ -1,0 +1,10 @@
+{
+  "name": "bc-ladder-frontend-checks",
+  "private": true,
+  "scripts": {
+    "test": "node check.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

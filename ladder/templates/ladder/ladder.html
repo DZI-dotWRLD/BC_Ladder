@@ -1,35 +1,14 @@
 {% extends "ladder/base.html" %}
-
+{% load static %}
 {% block title %}Ladder | BC Ladder{% endblock %}
-
+{% block main_class %}journey-shell{% endblock %}
 {% block content %}
-<h1>{% if division == "mens" %}Men's{% else %}Women's{% endif %} Ladder</h1>
-<div class="table-wrap" aria-label="Ladder standings">
-    <table>
-        <thead>
-            <tr>
-                <th>Rank</th>
-                <th>Team</th>
-                <th>Points</th>
-                <th>Wins</th>
-                <th>Losses</th>
-                <th>Played</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for standing in standings %}
-                <tr>
-                    <td>{{ forloop.counter }}</td>
-                    <td>{{ standing.team.name }}</td>
-                    <td>{{ standing.points }}</td>
-                    <td>{{ standing.wins }}</td>
-                    <td>{{ standing.losses }}</td>
-                    <td>{{ standing.matches_played }}</td>
-                </tr>
-            {% empty %}
-                <tr><td colspan="6">No standings yet.</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+<article class="journey-page ladder-page">
+    <header class="ladder-hero"><div><h1>The club<br><em>ladder.</em></h1><nav class="division-switch" aria-label="Ladder division"><a href="{% url 'ladder:ladder' 'mens' %}"{% if division == "mens" %} aria-current="page"{% endif %}>Men’s</a><a href="{% url 'ladder:ladder' 'womens' %}"{% if division == "womens" %} aria-current="page"{% endif %}>Women’s</a></nav></div><img src="{% static 'ladder/images/dashboard-serve-bw.jpg' %}" alt="" width="1536" height="1024"></header>
+    <section class="ladder-standings"><h2>{% if division == "mens" %}Men's{% else %}Women's{% endif %} doubles</h2>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Ladder standings, scroll horizontally for all columns"><table><thead><tr><th scope="col">Rank</th><th scope="col">Team</th><th scope="col">Points</th><th scope="col">Wins</th><th scope="col">Losses</th><th scope="col">Played</th></tr></thead><tbody>
+        {% for standing in standings %}<tr><td class="rank-cell">{{ forloop.counter }}</td><th scope="row">{{ standing.team.name }}</th><td class="points-cell">{{ standing.points }}</td><td>{{ standing.wins }}</td><td>{{ standing.losses }}</td><td>{{ standing.matches_played }}</td></tr>{% empty %}<tr><td colspan="6">No standings yet.</td></tr>{% endfor %}
+        </tbody></table></div>
+    </section>
+</article>
 {% endblock %}

@@ -1,15 +1,7 @@
 {% extends "ladder/base.html" %}
-
-{% block title %}Profile Setup | BC Ladder{% endblock %}
-
+{% load static %}
+{% block title %}Player profile | BC Ladder{% endblock %}
+{% block main_class %}auth-shell{% endblock %}
 {% block content %}
-<section class="panel">
-    <h1>Player Profile</h1>
-    <p class="muted">Select your division eligibility before using player features.</p>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Create profile</button>
-    </form>
-</section>
+<section class="auth-layout"><div class="auth-photo"><img src="{% static 'ladder/images/dashboard-court-bw.jpg' %}" alt="" width="1944" height="1024"></div><div class="auth-form-panel"><h1>Your player<br><em>profile.</em></h1><p>Select your division eligibility to get started.</p><form method="post">{% csrf_token %}{% include "ladder/partials/account_fields.html" %}<button type="submit">Create profile</button></form></div></section>
 {% endblock %}
