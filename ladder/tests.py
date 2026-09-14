@@ -1634,7 +1634,7 @@ class PhaseARequestTests(TestCase):
             save_availability(player.user, starts_at, ends_at)
 
         self.client.force_login(team_a_players[0].user)
-        candidate = self.client.get(reverse("ladder:suggestions")).context["options"][0]["candidate_token"]
+        candidate = self.client.get(reverse("ladder:suggestions"), {"discover": "1"}).context["options"][0]["candidate_token"]
         create_response = self.client.post(reverse("ladder:create_suggestion", args=[0]), {"candidate": candidate})
         suggestion = MatchSuggestion.objects.get()
         first_accept = self.client.post(

@@ -41,6 +41,13 @@
             if (!fragment) throw new Error("Section unavailable");
             const content = document.importNode(fragment, true);
             content.querySelectorAll("script").forEach((script) => script.remove());
+            // Query-only links belong to the fetched section, not its embedding page.
+            // URL resolution deliberately replaces the source query rather than
+            // inheriting discovery or unrelated dashboard parameters.
+            content.querySelectorAll('a[href^="?"]').forEach((link) => {
+                const destination = new URL(link.getAttribute("href"), url);
+                link.setAttribute("href", destination.pathname + destination.search + destination.hash);
+            });
             content.querySelectorAll("form").forEach((form) => {
                 if (!form.hasAttribute("action")) form.setAttribute("action", url.pathname);
             });

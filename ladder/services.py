@@ -827,13 +827,18 @@ def _matchmaking_snapshot(team, interval):
         members[membership.team_id].append(membership.player)
     player_ids = {player.id for players in members.values() for player in players}
     slots = defaultdict(list)
+    # Candidates preserve full source bounds, rather than clipping to search.
+    # Load conflicts across their envelope, including portions outside search.
+    reservation_start, reservation_end = interval
     for slot in AvailabilitySlot.objects.filter(
         player_id__in=player_ids, status=AvailabilitySlot.STATUS_ACTIVE, starts_at__lt=interval[1], ends_at__gt=interval[0]
     ).order_by("starts_at", "ends_at", "id"):
         slots[slot.player_id].append(slot)
+        reservation_start = min(reservation_start, slot.starts_at)
+        reservation_end = max(reservation_end, slot.ends_at)
     reservations = defaultdict(list)
     for reservation in MatchReservation.objects.filter(
-        player_id__in=player_ids, status=MatchReservation.STATUS_ACTIVE, starts_at__lt=interval[1], ends_at__gt=interval[0]
+        player_id__in=player_ids, status=MatchReservation.STATUS_ACTIVE, starts_at__lt=reservation_end, ends_at__gt=reservation_start
     ).order_by("starts_at", "ends_at"):
         reservations[reservation.player_id].append((reservation.starts_at, reservation.ends_at))
     reservation_index = {}
@@ -1104,6 +1109,11 @@ def _accept_suggestion_transaction(actor, suggestion, expected_version):
         actor_team = _suggestion_side_for_player(locked, actor_profile)
         if actor_team is None or actor_team not in {locked.team_a, locked.team_b}:
             raise AuthorizationFailure("Only selected lineup players may accept this suggestion.")
+        if locked.status == MatchSuggestion.STATUS_CONFIRMED:
+            existing_match = Match.objects.filter(source_suggestion=locked).first()
+            if existing_match is None:
+                raise StaleState("Confirmed suggestion has no recorded match.")
+            return existing_match
         if locked.status in {MatchSuggestion.STATUS_EXPIRED, MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED}:
             raise StaleState("Suggestion is no longer acceptible.")
         if locked.expires_at <= timezone.now():

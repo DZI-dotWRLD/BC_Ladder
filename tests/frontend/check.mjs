@@ -114,6 +114,30 @@ try {
     assert.equal(await fallback.locator('.availability-form input[name=csrfmiddlewaretoken]').count(), 1);
     assert.equal(await fallback.locator('#suggestions a[href="/suggestions/"]').count(), 1);
     await noJS.close();
+    // Serve a controlled pagination fixture inside real Django fragment responses.
+    // This proves imports retain source-route GET navigation without needing 21
+    // domain bookings merely to exercise browser URL resolution.
+    for (const fragment of ['matches', 'suggestions']) {
+        const sourcePath = `/${fragment}/`;
+        await page.route(`${base}${sourcePath}`, async route => {
+            const response = await route.fetch();
+            const html = await response.text();
+            const marker = `class="play-${fragment}">`;
+            assert.ok(html.includes(marker), `${fragment}: server fragment present`);
+            const paging = `<nav aria-label="Fixture results pages"><a href="?page=2">Fixture next page</a></nav>`;
+            await route.fulfill({ response, body: html.replace(marker, marker + paging) });
+        });
+        await visit('/availability/?embedding=unrelated');
+        await page.locator(`#${fragment}`).scrollIntoViewIfNeeded();
+        const next = page.locator(`#${fragment}`).getByRole('link', { name: 'Fixture next page', exact: true });
+        await next.waitFor();
+        assert.equal(await next.getAttribute('href'), `${sourcePath}?page=2`);
+        const navigation = page.waitForResponse(response => response.url() === `${base}${sourcePath}?page=2`);
+        await next.click();
+        assert.equal((await navigation).status(), 200);
+        await page.waitForURL(`${base}${sourcePath}?page=2`);
+        await page.unroute(`${base}${sourcePath}`);
+    }
     // Native keyboard navigation reaches the skip link and content landmark.
     await visit('/');
     await page.keyboard.press('Tab');

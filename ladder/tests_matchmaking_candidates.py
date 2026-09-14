@@ -3,7 +3,9 @@ from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -45,7 +47,7 @@ class CandidateCommandTests(TestCase):
         return team, players
 
     def chosen(self):
-        return self.client.get(reverse("ladder:suggestions")).context["options"][0]
+        return self.client.get(reverse("ladder:suggestions"), {"discover": "1"}).context["options"][0]
 
     def post(self, option, *, token=None):
         return self.client.post(
@@ -130,6 +132,51 @@ class CandidateCommandTests(TestCase):
             expanded = find_opponent_suggestions(self.team, (self.start, self.end + timedelta(days=1)))
         self.assertEqual([candidate_identity(item) for item in initial], [candidate_identity(item) for item in expanded])
         self.assertEqual(len(initial), 3)
+
+    def test_full_window_conflicts_outside_search_interval_are_excluded_in_four_queries(self):
+        window_start, window_end = self.start + timedelta(hours=1), self.start + timedelta(hours=4)
+        AvailabilitySlot.objects.update(starts_at=window_start, ends_at=window_end)
+        search = (self.start + timedelta(hours=2), self.start + timedelta(hours=3))
+        with self.assertNumQueries(4):
+            options = find_opponent_suggestions(self.team, search)
+        self.assertEqual(len(options), 3)
+        self.assertTrue(all(item["starts_at"] == window_start and item["ends_at"] == window_end for item in options))
+        match = Match.objects.create(
+            team_a=self.team,
+            team_b=self.opponent,
+            scheduled_week_start_date=window_start.date(),
+            scheduled_day_of_week="monday",
+            scheduled_start_time=window_start.time(),
+            scheduled_end_time=window_end.time(),
+            scheduled_starts_at=window_start,
+            scheduled_ends_at=window_end,
+        )
+        for start, end in ((window_start, window_start + timedelta(minutes=30)), (window_end - timedelta(minutes=30), window_end)):
+            with self.subTest(reservation_start=start):
+                MatchReservation.objects.update_or_create(match=match, player=self.others[0], defaults={"starts_at": start, "ends_at": end})
+                with self.assertNumQueries(4):
+                    self.assertEqual(find_opponent_suggestions(self.team, search), [])
+
+    def test_discovery_request_queries_are_bounded_and_signed_choice_posts_exactly(self):
+        with patch("ladder.views.find_opponent_suggestions", wraps=find_opponent_suggestions) as discover:
+            initial = self.client.get(reverse("ladder:suggestions"))
+            self.assertEqual(initial.context["options"], [])
+            discover.assert_not_called()
+        with CaptureQueriesContext(connection) as initial_queries:
+            chosen = self.chosen()
+        for index in range(8):
+            self.make_team(f"discovery-extra-{index}", 3, offset=10)
+        with CaptureQueriesContext(connection) as expanded_queries:
+            expanded = self.chosen()
+        self.assertEqual(len(initial_queries), len(expanded_queries))
+        self.assertLessEqual(len(expanded_queries), 24)
+        self.assertEqual(candidate_identity(chosen), candidate_identity(expanded))
+        self.post(chosen)
+        suggestion = MatchSuggestion.objects.get()
+        self.assertEqual(suggestion.team_b_id, chosen["team_b"].pk)
+        self.assertEqual(suggestion.starts_at, chosen["starts_at"])
+        self.assertEqual(suggestion.ends_at, chosen["ends_at"])
+        self.assertEqual(set(suggestion.participants.values_list("player_id", flat=True)), set(chosen["availability"]))
 
     def test_partial_overlap_boundary_and_cross_ladder_eligibility(self):
         partial, _ = self.make_team("partial", 2, offset=1)
