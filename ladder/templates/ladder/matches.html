@@ -1,19 +1,4 @@
 {% extends "ladder/base.html" %}
-
-{% block title %}Matches | BC Ladder{% endblock %}
-
-{% block content %}
-<h1>Matches</h1>
-{% for match in matches %}
-    <div class="item">
-        <h2><a href="{% url 'ladder:match_detail' match.id %}">{{ match.team_a.name }} vs {{ match.team_b.name }}</a></h2>
-        <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }}</p>
-        <p><span class="status-pill">{{ match.get_status_display }}</span></p>
-    </div>
-{% empty %}
-    <section class="panel empty-state">
-        <p class="muted">No matches yet.</p>
-        <a class="button secondary" href="{% url 'ladder:suggestions' %}">Review suggestions</a>
-    </section>
-{% endfor %}
-{% endblock %}
+{% block title %}Play | BC Ladder{% endblock %}
+{% block main_class %}journey-shell{% endblock %}
+{% block content %}{% include "ladder/partials/play_shell.html" with active_section="matches" %}{% endblock %}

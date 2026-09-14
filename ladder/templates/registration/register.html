@@ -1,16 +1,13 @@
 {% extends "ladder/base.html" %}
-
-{% block title %}Register | BC Ladder{% endblock %}
-
+{% load static %}
+{% block title %}Create account | BC Ladder{% endblock %}
+{% block main_class %}auth-shell{% endblock %}
 {% block content %}
-<section class="panel">
-    <h1>Create account</h1>
-    <p class="muted">Register as a player, then choose a team from your dashboard.</p>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Create account</button>
-    </form>
-    <p class="muted">Already registered? <a href="{% url 'ladder:login' %}">Log in</a>.</p>
+<section class="auth-layout">
+    <div class="auth-photo"><img src="{% static 'ladder/images/dashboard-court-bw.jpg' %}" alt="" width="1944" height="1024"></div>
+    <div class="auth-form-panel"><h1>Join the<br><em>ladder.</em></h1><p>Create your player account. Choose your team next.</p>
+        <form method="post">{% csrf_token %}{% include "ladder/partials/account_fields.html" %}<button type="submit">Create account</button></form>
+        <div class="auth-links"><p>Already registered? <a href="{% url 'ladder:login' %}">Log in</a>.</p></div>
+    </div>
 </section>
 {% endblock %}

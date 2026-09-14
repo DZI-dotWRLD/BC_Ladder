@@ -20,3 +20,7 @@ staticfiles/
 # OS
 .DS_Store
 Thumbs.db
+
+# Browser-check dependencies and generated evidence
+node_modules/
+output/playwright/ci/

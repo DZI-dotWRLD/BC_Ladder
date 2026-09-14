@@ -1,0 +1,25 @@
+<div data-fragment="matches" class="play-matches">
+    <section id="submit-score" class="play-score-section" aria-labelledby="submit-score-heading">
+        <header class="journey-section-heading"><h2 id="submit-score-heading">Submit match scores</h2><p>Choose a match to open its scorecard.</p></header>
+        <div class="score-match-list">
+        {% for match in matches %}{% if match.status == "scheduled" %}
+            <article class="history-match score-match">
+                <time datetime="{{ match.scheduled_starts_at|date:'c' }}"><span>{{ match.scheduled_starts_at|date:"M j, Y" }}</span><strong>{{ match.scheduled_starts_at|date:"g:i A" }}</strong></time>
+                <div><h3>{{ match.team_a.name }} <span>vs</span> {{ match.team_b.name }}</h3></div>
+                <a class="button" href="{% url 'ladder:match_detail' match.id %}#score-submission">Enter score</a>
+            </article>
+        {% endif %}{% endfor %}
+        </div>
+        <details class="quiet-disclosure"><summary>About scorecards</summary><p>If no matches are listed, you have no scheduled matches to score. Only selected match players can submit scores. Completed results remain in your match history.</p></details>
+    </section>
+    <header class="journey-section-heading"><h2>Your matches</h2><p>Bookings, results and scorecards.</p></header>
+    <div class="match-history-list">
+        {% for match in matches %}
+            <article class="history-match">
+                <time datetime="{{ match.scheduled_starts_at|date:'c' }}"><span>{{ match.scheduled_starts_at|date:"M j, Y" }}</span><strong>{{ match.scheduled_starts_at|date:"g:i A" }}</strong></time>
+                <div><h3>{{ match.team_a.name }} <span>vs</span> {{ match.team_b.name }}</h3><p>{{ match.get_status_display }}</p></div>
+                <a class="button secondary" href="{% url 'ladder:match_detail' match.id %}">{% if match.status == "scheduled" %}Open scorecard{% else %}View match{% endif %}</a>
+            </article>
+        {% empty %}<div class="journey-empty"><h3>No matches yet.</h3><a class="button secondary" href="{% url 'ladder:suggestions' %}">Review suggestions</a></div>{% endfor %}
+    </div>
+</div>

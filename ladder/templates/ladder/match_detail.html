@@ -2,11 +2,13 @@
 
 {% block title %}Match | BC Ladder{% endblock %}
 
+{% block main_class %}journey-shell{% endblock %}
 {% block content %}
+<article class="scorecard-page"><a class="text-link scorecard-back" href="{% url 'ladder:availability' %}#matches">Back to Play</a>
 <h1>{{ match.team_a.name }} vs {{ match.team_b.name }}</h1>
 <section class="panel">
     <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A" }}</p>
-    <p><span class="status-pill">{{ match.get_status_display }}</span> <span class="status-pill">{{ status }}</span></p>
+    <p><span class="status-pill">{{ match.get_status_display }}</span> <span class="status-pill">{% if status == "waiting_for_submissions" %}Awaiting team scores{% elif status == "confirmed" %}Scores agreed{% elif status == "conflict" %}Score review needed{% endif %}</span></p>
     <h2>Players</h2>
     {% for participant in match.participants.all %}
         <p>{{ participant.team.name }}: {{ participant.player.user.username }}</p>
@@ -22,9 +24,10 @@
     </section>
 {% endif %}
 {% if match.status == "scheduled" and is_selected_participant %}
-    <section class="panel">
+    <section class="panel" id="score-submission">
         <h2>Submit Score</h2>
-        <p class="muted">Enter two regular sets. Add the third set only when it is a deciding match tie-break.</p>
+        <details class="quiet-disclosure"><summary>Scoring rules</summary><p>Enter two regular sets. Add the third set only when it is a deciding match tie-break.</p></details>
+        {% if score_form.errors %}<div class="account-errors" role="alert">{{ score_form.errors }}</div>{% endif %}
         <form method="post" action="{% url 'ladder:submit_score' match.id %}">
             {% csrf_token %}
             <fieldset class="score-fieldset">
@@ -52,4 +55,5 @@
         </form>
     </section>
 {% endif %}
+</article>
 {% endblock %}

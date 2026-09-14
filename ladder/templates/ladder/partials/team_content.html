@@ -1,0 +1,41 @@
+{% load static %}
+<div class="club-team-content" data-fragment="team">
+    <header class="journey-section-heading"><h2>{% if team %}Your team{% else %}Find your team{% endif %}</h2></header>
+    {% if team %}
+        <div class="team-roster-layout">
+            <div class="team-identity">
+                <h3>{{ team.name }}</h3>
+                <p>{{ team.get_division_display }} doubles · {{ member_count }}/{{ team_capacity }} members</p>
+                {% if team_is_full %}<p class="muted">All team places are filled.</p>{% endif %}
+                {% if membership and not membership.removal_requested_at %}
+                    <details class="quiet-disclosure"><summary>Team membership</summary>
+                        <p>An administrator must approve removal before you can join another team.</p>
+                        <form method="post" action="{% url 'ladder:request_team_removal' %}">{% csrf_token %}<button class="danger" type="submit">Request removal</button></form>
+                    </details>
+                {% elif membership and membership.removal_requested_at %}<p class="team-pending">Removal request pending admin review.</p>{% endif %}
+            </div>
+            <div class="team-roster" aria-label="Team members">
+                {% for member in members %}
+                    <div class="team-member"><span class="member-initial" aria-hidden="true">{{ member.user.username|first|upper }}</span><strong>{{ member.user.get_full_name|default:member.user.username }}</strong><span>Active member</span></div>
+                {% empty %}<p>No active members found.</p>{% endfor %}
+            </div>
+        </div>
+    {% else %}
+        {% if pending_join_request %}
+            <div class="team-pending"><h3>Request sent</h3><p>Your request to join {{ pending_join_request.team.name }} is pending admin review.</p>
+                <form method="post" action="{% url 'ladder:cancel_join_request' %}">{% csrf_token %}<button class="secondary" type="submit">Cancel join request</button></form>
+            </div>
+        {% else %}
+            <div class="team-join-layout">
+                <section class="team-join"><h3>Join a team</h3>
+                    <form method="post" action="{% url 'ladder:join_team' %}">{% csrf_token %}{{ join_form.as_p }}<button type="submit">Request to join</button></form>
+                    <details class="quiet-disclosure"><summary>How joining works</summary><p>Choose a team in your division. An administrator reviews your request before membership becomes active.</p></details>
+                </section>
+                <section class="team-create"><h3>Start your own</h3>
+                    <form method="post" action="{% url 'ladder:create_team' %}">{% csrf_token %}{{ create_form.as_p }}<button class="secondary" type="submit">Create team</button></form>
+                    <p class="muted">You become its first active member.</p>
+                </section>
+            </div>
+        {% endif %}
+    {% endif %}
+</div>

@@ -1392,13 +1392,28 @@ class PhaseARequestTests(TestCase):
         response = self.client.get(reverse("ladder:dashboard"))
 
         self.assertContains(response, "Dashboard")
-        self.assertContains(response, "Manual setup")
         self.assertContains(response, "Start here")
         self.assertContains(response, team.name)
         self.assertContains(response, 'class="dashboard-match-board"')
-        self.assertContains(response, "This week")
-        self.assertContains(response, "Current suggestions")
-        self.assertContains(response, "tennis-net-cal-gao.jpg")
+        self.assertContains(response, 'data-fragment="dashboard-overview"')
+        self.assertContains(response, 'data-compose-url="/team/"')
+        self.assertContains(response, "dashboard-court-bw.jpg")
+        self.assertNotContains(response, "dashboard-section-nav")
+        self.assertContains(response, 'id="team"')
+        self.assertContains(response, "Plan a match")
+        self.assertContains(response, 'aria-label="Quick access"')
+        self.assertContains(response, 'aria-label="Play shortcuts"')
+        self.assertContains(response, 'aria-label="Ladder shortcuts"')
+        self.assertContains(response, f'href="{reverse("ladder:ladder", args=["womens"])}"')
+        self.assertNotContains(response, "tennis-net-cal-gao.jpg")
+
+    def test_account_fields_keep_help_and_error_descriptions_connected(self):
+        response = self.client.get(reverse("ladder:register"))
+        self.assertContains(response, 'id="id_username_helptext"')
+        self.assertContains(response, 'aria-describedby="id_username_helptext"')
+        invalid_response = self.client.post(reverse("ladder:register"), {"username": ""})
+        self.assertContains(invalid_response, 'id="id_username_error"')
+        self.assertContains(invalid_response, 'aria-invalid="true"')
 
     def test_shared_shell_supports_skip_navigation_and_marks_current_page(self):
         _team, players = self.create_team_with_members("shell-navigation", 1)
@@ -1420,7 +1435,7 @@ class PhaseARequestTests(TestCase):
         )
         self.assertContains(
             team_response,
-            f'href="{reverse("ladder:team")}" aria-current="page"',
+            f'href="{reverse("ladder:dashboard")}" aria-current="page"',
         )
 
     def test_dashboard_setup_checklist_shows_pending_join_request(self):
@@ -1494,7 +1509,7 @@ class PhaseARequestTests(TestCase):
         response = self.client.get(reverse("ladder:team"))
 
         self.assertContains(response, "3/3 members")
-        self.assertContains(response, "This team is full")
+        self.assertContains(response, "All team places are filled.")
 
     def test_team_join_rejects_wrong_division_and_existing_active_team(self):
         womens_profile = self.create_profile("wrong-division", gender=PlayerProfile.GENDER_FEMALE)
@@ -1600,15 +1615,14 @@ class PhaseARequestTests(TestCase):
         _team, players = self.create_team_with_members("availability-hidden", 1)
         self.client.force_login(players[0].user)
         cancelled_slot = save_availability(players[0].user, self.make_dt(2026, 7, 29, 18), self.make_dt(2026, 7, 29, 20))
-        active_slot = save_availability(players[0].user, self.make_dt(2026, 7, 30, 18), self.make_dt(2026, 7, 30, 20))
+        save_availability(players[0].user, self.make_dt(2026, 7, 30, 18), self.make_dt(2026, 7, 30, 20))
         cancel_availability(players[0].user, cancelled_slot)
 
         response = self.client.get(reverse("ladder:availability"))
 
-        self.assertContains(response, "Active Windows")
-        self.assertContains(response, "1 cancelled window")
-        self.assertContains(response, active_slot.starts_at.strftime("%Y"))
-        self.assertNotContains(response, "Jul 29, 2026")
+        self.assertContains(response, "Your active times")
+        self.assertContains(response, "Jul 30")
+        self.assertNotContains(response, "Jul 29")
 
     def test_suggestion_create_and_dual_acceptance_flow(self):
         team_a, team_a_players = self.create_team_with_members("phase-a", 2)
@@ -1668,7 +1682,8 @@ class PhaseARequestTests(TestCase):
         self.client.force_login(no_shared_players[0].user)
         no_shared_response = self.client.get(reverse("ladder:suggestions"))
 
-        self.assertContains(no_availability_response, "Add active availability")
+        self.assertContains(no_availability_response, "No compatible suggestions yet.")
+        self.assertNotContains(no_availability_response, ">Add active availability<")
         self.assertContains(no_availability_response, "At least two teammates need overlapping")
         self.assertContains(no_shared_response, "No shared team availability")
         self.assertContains(no_shared_response, no_shared_team.name)
@@ -1694,7 +1709,7 @@ class PhaseARequestTests(TestCase):
         self.assertContains(valid_response, opponent_team.name)
         self.assertContains(valid_response, "Your lineup")
         self.assertContains(valid_response, "Opponent lineup")
-        self.assertContains(valid_response, "Create suggestion")
+        self.assertContains(valid_response, "Request match")
 
     def test_current_suggestion_accept_button_only_shows_for_selected_lineup_players(self):
         team_a, team_a_players = self.create_team_with_members("suggestions-selected-a", 3)
@@ -1736,6 +1751,11 @@ class PhaseARequestTests(TestCase):
         self.client.force_login(outside_players[0].user)
         denied = self.client.get(reverse("ladder:match_detail", args=[match.id]))
         self.client.force_login(team_a_players[0].user)
+        scorecard_response = self.client.get(reverse("ladder:match_detail", args=[match.id]))
+        self.assertContains(scorecard_response, 'id="score-submission"')
+        matches_response = self.client.get(reverse("ladder:matches"))
+        self.assertContains(matches_response, 'id="submit-score"')
+        self.assertContains(matches_response, f'href="{reverse("ladder:match_detail", args=[match.id])}#score-submission"')
         first = self.client.post(
             reverse("ladder:submit_score", args=[match.id]),
             {"set1_team_a": 6, "set1_team_b": 4, "set2_team_a": 6, "set2_team_b": 4},

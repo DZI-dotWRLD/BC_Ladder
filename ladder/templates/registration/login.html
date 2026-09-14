@@ -1,16 +1,13 @@
 {% extends "ladder/base.html" %}
-
+{% load static %}
 {% block title %}Log in | BC Ladder{% endblock %}
-
+{% block main_class %}auth-shell{% endblock %}
 {% block content %}
-<section class="panel">
-    <h1>Log in</h1>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Log in</button>
-    </form>
-    <p class="muted"><a href="{% url 'ladder:password_reset' %}">Forgot your password?</a></p>
-    <p class="muted">New to the ladder? <a href="{% url 'ladder:register' %}">Create an account</a>.</p>
+<section class="auth-layout">
+    <div class="auth-photo"><img src="{% static 'ladder/images/dashboard-court-bw.jpg' %}" alt="" width="1944" height="1024"></div>
+    <div class="auth-form-panel"><h1>Welcome<br><em>back.</em></h1><p>Log in to your club ladder.</p>
+        <form method="post">{% csrf_token %}{% include "ladder/partials/account_fields.html" %}<input type="hidden" name="next" value="{{ next }}"><button type="submit">Log in</button></form>
+        <div class="auth-links"><a href="{% url 'ladder:password_reset' %}">Forgot your password?</a><p>New to the ladder? <a href="{% url 'ladder:register' %}">Create an account</a>.</p></div>
+    </div>
 </section>
 {% endblock %}
