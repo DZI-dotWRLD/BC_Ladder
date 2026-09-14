@@ -2,7 +2,6 @@ from collections import defaultdict
 from bisect import bisect_left
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from itertools import combinations
-from zoneinfo import ZoneInfo
 
 from django.core import signing
 from django.db import IntegrityError, transaction
@@ -38,7 +37,6 @@ from .workflow_events import (
     suggestion_participant_user_ids,
 )
 
-CLUB_TIMEZONE = ZoneInfo("America/New_York")
 WIN_POINTS = 3
 DEFAULT_SUGGESTION_EXPIRY = timedelta(days=7)
 POSTGRES_AVAILABILITY_OVERLAP_CONSTRAINT = "availability_no_overlap_active_player"
@@ -127,8 +125,8 @@ def _validate_player_division(player, team):
 
 
 def _legacy_slot_parts(starts_at, ends_at):
-    local_start = timezone.localtime(starts_at, CLUB_TIMEZONE)
-    local_end = timezone.localtime(ends_at, CLUB_TIMEZONE)
+    local_start = timezone.localtime(starts_at, timezone.get_default_timezone())
+    local_end = timezone.localtime(ends_at, timezone.get_default_timezone())
     week_start = local_start.date() - timedelta(days=local_start.weekday())
     day_value = list(AvailabilitySlot.DayOfWeek.values)[local_start.weekday()]
     return week_start, day_value, local_start.time().replace(microsecond=0), local_end.time().replace(microsecond=0)
@@ -136,7 +134,10 @@ def _legacy_slot_parts(starts_at, ends_at):
 
 def _make_aware(value):
     if timezone.is_naive(value):
-        return timezone.make_aware(value, CLUB_TIMEZONE)
+        club_timezone = timezone.get_default_timezone()
+        if value.replace(tzinfo=club_timezone, fold=0).utcoffset() != value.replace(tzinfo=club_timezone, fold=1).utcoffset():
+            raise InvalidInput("Availability time is ambiguous or does not exist in the configured club timezone.")
+        value = timezone.make_aware(value, club_timezone)
     return value.astimezone(datetime_timezone.utc)
 
 
@@ -1086,23 +1087,29 @@ def _availability_covering(player, starts_at, ends_at):
 
 
 def accept_suggestion(actor, suggestion, expected_version):
+    result = _accept_suggestion_transaction(actor, suggestion, expected_version)
+    # Expiry is a durable lifecycle transition, not a failed booking write.
+    # Raise only after its transaction has committed; other errors still roll back.
+    if isinstance(result, StaleState):
+        raise result
+    return result
+
+
+def _accept_suggestion_transaction(actor, suggestion, expected_version):
     actor_profile = _profile_for_user(actor)
     with transaction.atomic():
         locked = MatchSuggestion.objects.select_for_update().select_related("team_a", "team_b").get(pk=suggestion.pk)
         if locked.version != expected_version:
             raise StaleState("Suggestion version is stale.")
+        actor_team = _suggestion_side_for_player(locked, actor_profile)
+        if actor_team is None or actor_team not in {locked.team_a, locked.team_b}:
+            raise AuthorizationFailure("Only selected lineup players may accept this suggestion.")
         if locked.status in {MatchSuggestion.STATUS_EXPIRED, MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED}:
             raise StaleState("Suggestion is no longer acceptible.")
         if locked.expires_at <= timezone.now():
             locked.status = MatchSuggestion.STATUS_EXPIRED
             locked.save(update_fields=["status", "updated_at"])
-            raise StaleState("Suggestion has expired.")
-
-        actor_team = _suggestion_side_for_player(locked, actor_profile)
-        if actor_team is None:
-            raise AuthorizationFailure("Only selected lineup players may accept this suggestion.")
-        if actor_team not in {locked.team_a, locked.team_b}:
-            raise AuthorizationFailure("User cannot accept for this suggestion.")
+            return StaleState("Suggestion has expired.")
 
         acceptance, _ = SuggestionAcceptance.objects.get_or_create(
             suggestion=locked,

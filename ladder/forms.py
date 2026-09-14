@@ -4,7 +4,6 @@ from django.contrib.auth import get_user_model
 
 from .models import PlayerProfile, Team
 from .registration import EMAIL_CONFLICT, users_with_email
-from .services import CLUB_TIMEZONE
 
 
 class SuggestionAcceptanceForm(forms.Form):
@@ -24,12 +23,6 @@ class AvailabilityForm(forms.Form):
         input_formats=["%Y-%m-%dT%H:%M"],
         widget=forms.DateTimeInput(attrs={"type": "datetime-local"}),
     )
-
-    def clean_starts_at(self):
-        return self.cleaned_data["starts_at"].replace(tzinfo=CLUB_TIMEZONE)
-
-    def clean_ends_at(self):
-        return self.cleaned_data["ends_at"].replace(tzinfo=CLUB_TIMEZONE)
 
 
 class TeamJoinForm(forms.Form):
