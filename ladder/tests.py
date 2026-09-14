@@ -11,7 +11,7 @@ from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, connection, transaction
-from django.test import Client, TestCase, override_settings
+from django.test import Client, TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -2453,7 +2453,8 @@ class PasswordResetRequestTests(TestCase):
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
     DEFAULT_FROM_EMAIL="BC Ladder <ladder@example.com>",
 )
-class EmailNotificationTests(TestCase):
+class EmailNotificationTests(TransactionTestCase):
+    captureOnCommitCallbacks = TestCase.captureOnCommitCallbacks
     club_tz = ZoneInfo("America/New_York")
 
     def setUp(self):
@@ -2624,6 +2625,7 @@ class EmailNotificationTests(TestCase):
     def test_delivery_locks_only_outbox_rows(self):
         suggestion, _players_a, _players_b = self.create_suggestion()
         event = WorkflowEvent.objects.get(suggestion=suggestion)
+        EmailNotificationDelivery.objects.filter(event=event).update(status=EmailNotificationDelivery.STATUS_PENDING)
 
         with patch.object(
             EmailNotificationDelivery.objects,
@@ -2632,7 +2634,106 @@ class EmailNotificationTests(TestCase):
         ) as select_for_update:
             deliver_event_email_notifications(event.id)
 
-        select_for_update.assert_called_once_with(of=("self",))
+        self.assertEqual(select_for_update.call_count, 4)
+        select_for_update.assert_called_with(of=("self",))
+
+    def test_smtp_runs_without_transaction_and_live_claim_is_not_reclaimed(self):
+        from django.db import connection
+        from .email_notifications import _claim_delivery
+
+        def send(message):
+            self.assertFalse(connection.in_atomic_block)
+            delivery = EmailNotificationDelivery.objects.get(user__email=message.to[0])
+            self.assertEqual(delivery.status, "sending")
+            self.assertIsNone(_claim_delivery(delivery.pk, ["pending"]))
+            return 1
+
+        with patch("ladder.email_notifications.EmailMessage.send", autospec=True, side_effect=send):
+            self.create_suggestion()
+
+    def test_crash_claim_is_recovered_and_old_token_cannot_finalize(self):
+        from .email_notifications import _claim_delivery, _finalize_delivery
+
+        suggestion, _, _ = self.create_suggestion()
+        delivery = EmailNotificationDelivery.objects.filter(event__suggestion=suggestion).first()
+        EmailNotificationDelivery.objects.filter(pk=delivery.pk).update(status="pending", sent_at=None)
+        old = _claim_delivery(delivery.pk, ["pending"])
+        self.assertIsNone(_claim_delivery(delivery.pk, ["pending"]))
+        EmailNotificationDelivery.objects.filter(pk=delivery.pk).update(claim_expires_at=timezone.now() - timedelta(seconds=1))
+        new = _claim_delivery(delivery.pk, ["pending"])
+        self.assertNotEqual(old.claim_token, new.claim_token)
+        self.assertFalse(_finalize_delivery(old, "sent"))
+        self.assertTrue(_finalize_delivery(new, "sent"))
+        new.refresh_from_db()
+        self.assertEqual(new.attempts, 3)
+
+    def test_delivery_rejects_caller_transaction(self):
+        with transaction.atomic(), self.assertRaises(RuntimeError):
+            deliver_event_email_notifications(0)
+
+    def test_process_crash_before_smtp_is_recovered_by_command(self):
+        with patch("ladder.email_notifications.EmailMessage.send", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            # Simulate a terminated worker; domain data remains committed.
+            self.create_suggestion()
+        delivery = EmailNotificationDelivery.objects.get(status="sending")
+        self.assertEqual(delivery.attempts, 1)
+        EmailNotificationDelivery.objects.filter(pk=delivery.pk).update(claim_expires_at=timezone.now() - timedelta(seconds=1))
+        call_command("send_notification_emails", stdout=StringIO())
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, "sent")
+        self.assertEqual(delivery.attempts, 2)
+        self.assertEqual(len(mail.outbox), 4)
+
+    def test_crash_after_provider_acceptance_can_duplicate_on_recovery(self):
+        with patch("ladder.email_notifications._finalize_delivery", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self.create_suggestion()
+        self.assertEqual(len(mail.outbox), 1)
+        delivery = EmailNotificationDelivery.objects.get(status="sending")
+        EmailNotificationDelivery.objects.filter(pk=delivery.pk).update(claim_expires_at=timezone.now() - timedelta(seconds=1))
+        call_command("send_notification_emails", stdout=StringIO())
+        self.assertEqual(len(mail.outbox), 5)
+        self.assertEqual(EmailNotificationDelivery.objects.filter(status="sent").count(), 4)
+
+    def test_rollback_neither_queues_nor_sends(self):
+        with self.assertRaises(ValueError), transaction.atomic():
+            self.create_suggestion()
+            raise ValueError("Rollback domain transaction")
+        self.assertFalse(EmailNotificationDelivery.objects.exists())
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_provider_error_details_are_not_logged(self):
+        with patch("ladder.email_notifications.EmailMessage.send", side_effect=OSError("secret-token private@example.com")):
+            with self.assertLogs("ladder.email_notifications", level="ERROR") as logs:
+                self.create_suggestion()
+        self.assertNotIn("secret-token", " ".join(logs.output))
+        self.assertNotIn("private@example.com", " ".join(logs.output))
+
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_postgresql_competing_workers_claim_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from django.db import close_old_connections
+        from .email_notifications import _claim_delivery
+
+        suggestion, _, _ = self.create_suggestion()
+        delivery = EmailNotificationDelivery.objects.filter(event__suggestion=suggestion).first()
+        EmailNotificationDelivery.objects.filter(pk=delivery.pk).update(status="pending")
+        barrier = Barrier(2)
+
+        def claim():
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                result = _claim_delivery(delivery.pk, ["pending"])
+                return result.claim_token if result else None
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(lambda _: claim(), range(2)))
+        self.assertEqual(sum(token is not None for token in results), 1)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.attempts, 2)
 
 
 class ProductionSettingsValidationTests(TestCase):

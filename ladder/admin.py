@@ -411,10 +411,12 @@ class WorkflowEventRecipientAdmin(admin.ModelAdmin):
 
 
 class EmailNotificationDeliveryAdmin(admin.ModelAdmin):
-    list_display = ("notification_type", "user", "status", "attempts", "last_attempt_at", "sent_at")
+    list_display = ("notification_type", "user", "status", "attempts", "last_attempt_at", "claim_expires_at", "sent_at")
     list_filter = ("notification_type", "status", "created_at")
     list_select_related = ("event", "user")
     readonly_fields = (
+        "claim_token",
+        "claim_expires_at",
         "event",
         "user",
         "notification_type",
