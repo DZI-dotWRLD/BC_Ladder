@@ -8,7 +8,15 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from .forms import AvailabilityForm, PlayerRegistrationForm, ProfileSetupForm, ScoreSubmissionForm, TeamCreateForm, TeamJoinForm
+from .forms import (
+    AvailabilityForm,
+    PlayerRegistrationForm,
+    ProfileSetupForm,
+    ScoreSubmissionForm,
+    SuggestionAcceptanceForm,
+    TeamCreateForm,
+    TeamJoinForm,
+)
 from .models import (
     AvailabilitySlot,
     LadderStanding,
@@ -486,7 +494,7 @@ def cancel_availability_view(request, slot_id):
     profile = _profile_or_setup(request)
     if profile is None:
         return redirect("ladder:profile_setup")
-    slot = get_object_or_404(AvailabilitySlot, pk=slot_id)
+    slot = get_object_or_404(profile.availability_slots.all(), pk=slot_id)
     try:
         cancel_availability(request.user, slot)
         messages.success(request, "Availability cancelled.")
@@ -558,9 +566,16 @@ def create_suggestion_view(request, option_index):
 def accept_suggestion_view(request, suggestion_id):
     if request.method != "POST":
         return redirect("ladder:suggestions")
-    suggestion = get_object_or_404(MatchSuggestion, pk=suggestion_id)
+    profile = _profile_or_setup(request)
+    if profile is None:
+        return redirect("ladder:profile_setup")
+    suggestion = get_object_or_404(MatchSuggestion.objects.filter(participants__player=profile), pk=suggestion_id)
+    form = SuggestionAcceptanceForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Enter a valid suggestion version and try again.")
+        return redirect("ladder:suggestions")
     try:
-        result = accept_suggestion(request.user, suggestion, int(request.POST.get("version", "0")))
+        result = accept_suggestion(request.user, suggestion, form.cleaned_data["version"])
         if isinstance(result, Match):
             messages.success(request, "Match confirmed.")
             return redirect("ladder:match_detail", match_id=result.id)

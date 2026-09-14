@@ -1608,7 +1608,7 @@ class PhaseARequestTests(TestCase):
         self.assertEqual(cancel_response.status_code, 302)
         slot.refresh_from_db()
         self.assertEqual(slot.status, AvailabilitySlot.STATUS_CANCELLED)
-        self.assertEqual(blocked_response.status_code, 302)
+        self.assertEqual(blocked_response.status_code, 404)
         self.assertEqual(other_slot.status, AvailabilitySlot.STATUS_ACTIVE)
 
     def test_cancelled_availability_is_hidden_from_player_window_list(self):

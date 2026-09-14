@@ -6,6 +6,10 @@ from .models import PlayerProfile, Team
 from .services import CLUB_TIMEZONE
 
 
+class SuggestionAcceptanceForm(forms.Form):
+    version = forms.IntegerField(min_value=1, max_value=2147483647)
+
+
 class AvailabilityForm(forms.Form):
     starts_at = forms.DateTimeField(
         input_formats=["%Y-%m-%dT%H:%M"],
