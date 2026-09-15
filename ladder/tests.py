@@ -2533,6 +2533,15 @@ class EmailNotificationTests(TransactionTestCase):
             "starts_at": suggestion.starts_at,
             "ends_at": suggestion.ends_at,
         }
+        option["availability"] = {
+            slot.player_id: slot
+            for slot in AvailabilitySlot.objects.filter(
+                player_id__in=[player.pk for player in option["team_a_players"] + option["team_b_players"]],
+                status=AvailabilitySlot.STATUS_ACTIVE,
+                starts_at__lte=suggestion.starts_at,
+                ends_at__gte=suggestion.ends_at,
+            )
+        }
 
         with self.captureOnCommitCallbacks(execute=True):
             duplicate = create_match_suggestion(option, expires_at=self.make_dt(20, 18))
@@ -2727,7 +2736,7 @@ class EmailNotificationTests(TransactionTestCase):
                 result = _claim_delivery(delivery.pk, ["pending"])
                 return result.claim_token if result else None
             finally:
-                close_old_connections()
+                connection.close()
 
         with ThreadPoolExecutor(max_workers=2) as workers:
             results = list(workers.map(lambda _: claim(), range(2)))

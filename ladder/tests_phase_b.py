@@ -104,7 +104,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
                 with lock:
                     results.append(("error", error))
             finally:
-                close_old_connections()
+                connection.close()
 
         threads = [threading.Thread(target=worker, args=(func,)) for func in callables]
         for thread in threads:
@@ -112,6 +112,61 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         for thread in threads:
             thread.join(timeout=30)
         self.assertFalse(any(thread.is_alive() for thread in threads))
+        return results
+
+    def run_finalizations_with_synchronized_division_advisory_locks(self, callables):
+        """Make both finalizers contend at the division-wide advisory lock.
+
+        The explicit advisory-lock observation makes the regression fail if a
+        finalizer regresses to the partial-standing-row protocol. It avoids
+        synchronizing later row locks, which are intentionally serialized by
+        the advisory lock in the correct implementation.
+        """
+        start_barrier = threading.Barrier(len(callables))
+        advisory_lock_barrier = threading.Barrier(len(callables))
+        results = []
+        results_lock = threading.Lock()
+        advisory_attempts = []
+
+        def worker(func):
+            close_old_connections()
+            observed_advisory_lock = False
+
+            def synchronize_advisory_lock(execute, sql, params, many, context):
+                nonlocal observed_advisory_lock
+                if not observed_advisory_lock and "pg_advisory_xact_lock" in sql.lower():
+                    observed_advisory_lock = True
+                    with results_lock:
+                        advisory_attempts.append(threading.get_ident())
+                    advisory_lock_barrier.wait(timeout=10)
+                return execute(sql, params, many, context)
+
+            try:
+                start_barrier.wait(timeout=10)
+                with connection.execute_wrapper(synchronize_advisory_lock):
+                    value = func()
+                outcome = ("ok", value)
+            except Exception as error:  # intentionally captured for assertions
+                outcome = ("error", error)
+            finally:
+                connection.close()
+            with results_lock:
+                results.append(outcome)
+
+        threads = [threading.Thread(target=worker, args=(func,)) for func in callables]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        self.assertFalse(
+            any(thread.is_alive() for thread in threads),
+            "Standing-finalization workers deadlocked or failed to finish",
+        )
+        self.assertEqual(
+            len(advisory_attempts),
+            len(callables),
+            "Each finalizer must attempt the division-wide transaction advisory lock before standing writes",
+        )
         return results
 
     def test_competing_suggestion_confirmations_create_one_booking(self):
@@ -407,6 +462,75 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         self.assertEqual((team_a.standing.matches_played, team_a.standing.wins, team_a.standing.points), (2, 2, 6))
         self.assertEqual(ConfirmedMatchResult.objects.count(), 2)
         self.assertEqual(PointLedger.objects.count(), 4)
+
+    def test_overlapping_finalizations_lock_standings_without_deadlock_and_persist_all_totals(self):
+        team_a, team_a_players = self.create_team_with_members("pg-final-order-a", 2)
+        team_b, team_b_players = self.create_team_with_members("pg-final-order-b", 2)
+        team_c, team_c_players = self.create_team_with_members("pg-final-order-c", 2)
+        for position, team in enumerate((team_a, team_b, team_c), start=1):
+            LadderStanding.objects.create(team=team, position=position)
+
+        first = self.create_scheduled_match(
+            team_a, team_b, self.make_dt(2027, 9, 5, 18), self.make_dt(2027, 9, 5, 20)
+        )
+        second = self.create_scheduled_match(
+            team_b, team_c, self.make_dt(2027, 9, 6, 18), self.make_dt(2027, 9, 6, 20)
+        )
+        self.add_match_participants(first, team_a_players, team_b_players)
+        self.add_match_participants(second, team_b_players, team_c_players)
+        for match, winner, loser, winner_player, loser_player in (
+            (first, team_a, team_b, team_a_players[0], team_b_players[0]),
+            (second, team_b, team_c, team_b_players[1], team_c_players[0]),
+        ):
+            MatchResultSubmission.objects.create(
+                match=match,
+                submitting_team=winner,
+                submitting_user=winner_player.user,
+                team_a_sets_won=2 if winner == match.team_a else 0,
+                team_b_sets_won=0 if winner == match.team_a else 2,
+            )
+            MatchResultSubmission.objects.create(
+                match=match,
+                submitting_team=loser,
+                submitting_user=loser_player.user,
+                team_a_sets_won=2 if winner == match.team_a else 0,
+                team_b_sets_won=0 if winner == match.team_a else 2,
+            )
+
+        results = self.run_finalizations_with_synchronized_division_advisory_locks(
+            [
+                lambda: finalize_match_result(Match.objects.get(pk=first.pk)),
+                lambda: finalize_match_result(Match.objects.get(pk=second.pk)),
+            ]
+        )
+
+        self.assertEqual([status for status, _ in results], ["ok", "ok"])
+        self.assertEqual(ConfirmedMatchResult.objects.filter(match__in=[first, second]).count(), 2)
+        self.assertEqual(PointLedger.objects.filter(match__in=[first, second], reason="match_result").count(), 4)
+        self.assertEqual(
+            set(PointLedger.objects.filter(match__in=[first, second]).values_list("match_id", "team_id", "points_delta")),
+            {
+                (first.pk, team_a.pk, 3),
+                (first.pk, team_b.pk, 0),
+                (second.pk, team_b.pk, 3),
+                (second.pk, team_c.pk, 0),
+            },
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual((first.status, second.status), (Match.STATUS_COMPLETED, Match.STATUS_COMPLETED))
+        for standing in (team_a.standing, team_b.standing, team_c.standing):
+            standing.refresh_from_db()
+        self.assertEqual(
+            (team_a.standing.matches_played, team_a.standing.wins, team_a.standing.losses, team_a.standing.points), (1, 1, 0, 3)
+        )
+        self.assertEqual(
+            (team_b.standing.matches_played, team_b.standing.wins, team_b.standing.losses, team_b.standing.points), (2, 1, 1, 3)
+        )
+        self.assertEqual(
+            (team_c.standing.matches_played, team_c.standing.wins, team_c.standing.losses, team_c.standing.points), (1, 0, 1, 0)
+        )
+        self.assertEqual((team_a.standing.position, team_b.standing.position, team_c.standing.position), (1, 2, 3))
 
     def test_concurrent_matching_score_submissions_finalize_once(self):
         team_a, team_a_players = self.create_team_with_members("pg-submit-a", 2)

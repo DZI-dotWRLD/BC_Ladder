@@ -140,7 +140,7 @@ class PostgreSQLRegistrationRaceTests(TransactionTestCase):
                 response = Client().post(reverse("ladder:register"), payload(f"player-{index}", "Player@example.com"))
                 return response.status_code, response.content.decode()
             finally:
-                close_old_connections()
+                connection.close()
 
         with patch.object(PlayerRegistrationForm, "clean_email", synchronized_clean), ThreadPoolExecutor(max_workers=2) as workers:
             outcomes = list(workers.map(submit, range(2)))
