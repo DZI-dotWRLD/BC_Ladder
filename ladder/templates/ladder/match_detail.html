@@ -7,8 +7,10 @@
 <article class="scorecard-page"><a class="text-link scorecard-back" href="{% url 'ladder:availability' %}#matches">Back to Play</a>
 <h1>{{ match.team_a.name }} vs {{ match.team_b.name }}</h1>
 <section class="panel">
-    <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A" }}</p>
-    <p><span class="status-pill">{{ match.get_status_display }}</span> <span class="status-pill">{% if status == "waiting_for_submissions" %}Awaiting team scores{% elif status == "confirmed" %}Scores agreed{% elif status == "conflict" %}Score review needed{% endif %}</span></p>
+    <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A T" }}</p>
+    <p>{{ state_note }}</p>
+    {% if official_result %}<h2>Official score</h2><p>{% for set in official_result.confirmed_from_submission.sets.all %}{{ set.team_a_score }}–{{ set.team_b_score }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    <p><span class="status-pill">{{ match.get_status_display }}</span> <span class="status-pill">{% if official_result %}Official result recorded{% elif status == "waiting_for_submissions" %}Awaiting team scores{% elif status == "confirmed" %}Scores agreed{% elif status == "conflict" %}Score review needed{% endif %}</span></p>
     <h2>Players</h2>
     {% for participant in match.participants.all %}
         <p>{{ participant.team.name }}: {{ participant.player.user.username }}</p>
@@ -23,7 +25,7 @@
         <a class="button danger" href="{% url 'ladder:cancel_match' match.id %}">Cancel match</a>
     </section>
 {% endif %}
-{% if match.status == "scheduled" and is_selected_participant %}
+{% if can_submit %}
     <section class="panel" id="score-submission">
         <h2>Submit Score</h2>
         <details class="quiet-disclosure"><summary>Scoring rules</summary><p>Enter two regular sets. Add the third set only when it is a deciding match tie-break.</p></details>

@@ -16,7 +16,6 @@ from ladder.models import (
     Team,
 )
 from ladder.services import (
-    CLUB_TIMEZONE,
     InvalidInput,
     accept_suggestion,
     create_match_suggestion,
@@ -150,7 +149,7 @@ class Command(BaseCommand):
 
     def _window(self, days_from_now, hour):
         target_date = timezone.localdate() + timedelta(days=days_from_now)
-        starts_at = datetime.combine(target_date, time(hour, 0), tzinfo=CLUB_TIMEZONE)
+        starts_at = datetime.combine(target_date, time(hour, 0), tzinfo=timezone.get_default_timezone())
         ends_at = starts_at + timedelta(hours=2)
         return starts_at, ends_at
 

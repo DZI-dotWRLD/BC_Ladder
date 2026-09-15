@@ -1,11 +1,13 @@
 import logging
 from datetime import datetime, timedelta
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage, get_connection
 from django.core.validators import validate_email
-from django.db import transaction
+from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import EmailNotificationDelivery
@@ -106,68 +108,84 @@ def _event_message(event, notification_type):
     raise ValueError("Unsupported email notification type.")
 
 
+def eligible_deliveries(statuses):
+    return EmailNotificationDelivery.objects.filter(
+        Q(status__in=statuses) | Q(status=EmailNotificationDelivery.STATUS_SENDING, claim_expires_at__lte=timezone.now())
+    )
+
+
+def _claim_delivery(delivery_id, statuses):
+    with transaction.atomic():
+        delivery = EmailNotificationDelivery.objects.select_for_update(of=("self",)).filter(pk=delivery_id).first()
+        if delivery is None:
+            return None
+        now = timezone.now()
+        expired = (
+            delivery.status == EmailNotificationDelivery.STATUS_SENDING
+            and delivery.claim_expires_at is not None
+            and delivery.claim_expires_at <= now
+        )
+        if delivery.status not in statuses and not expired:
+            return None
+        delivery.status = EmailNotificationDelivery.STATUS_SENDING
+        delivery.claim_token = uuid4()
+        # Claim one message at a time; the lease must exceed the SMTP timeout.
+        delivery.claim_expires_at = now + timedelta(seconds=max(300, (settings.EMAIL_TIMEOUT or 10) * 3))
+        delivery.attempts += 1
+        delivery.last_attempt_at = now
+        delivery.save(update_fields=["status", "claim_token", "claim_expires_at", "attempts", "last_attempt_at"])
+        return delivery
+
+
+def _finalize_delivery(delivery, status, error=""):
+    return bool(
+        EmailNotificationDelivery.objects.filter(
+            pk=delivery.pk, status=EmailNotificationDelivery.STATUS_SENDING, claim_token=delivery.claim_token
+        ).update(
+            status=status,
+            last_error=error,
+            claim_token=None,
+            claim_expires_at=None,
+            sent_at=timezone.now() if status == EmailNotificationDelivery.STATUS_SENT else None,
+        )
+    )
+
+
 def deliver_event_email_notifications(event_id, include_failed=False, include_skipped=False):
+    if connection.in_atomic_block or not connection.get_autocommit():
+        raise RuntimeError("Notification delivery must run after the caller's transaction commits.")
     statuses = [EmailNotificationDelivery.STATUS_PENDING]
     if include_failed:
         statuses.append(EmailNotificationDelivery.STATUS_FAILED)
     if include_skipped:
         statuses.append(EmailNotificationDelivery.STATUS_SKIPPED)
 
-    with transaction.atomic():
-        deliveries = list(
-            EmailNotificationDelivery.objects.select_for_update(of=("self",))
-            .filter(event_id=event_id, status__in=statuses)
-            .select_related(
-                "user",
-                "event__suggestion__team_a",
-                "event__suggestion__team_b",
-                "event__match__team_a",
-                "event__match__team_b",
+    delivery_ids = list(eligible_deliveries(statuses).filter(event_id=event_id).order_by("id").values_list("id", flat=True))
+    sent_count = 0
+    for delivery_id in delivery_ids:
+        delivery = _claim_delivery(delivery_id, statuses)
+        if delivery is None:
+            continue
+        # All network I/O and message rendering happen after releasing the claim lock.
+        email_address = delivery.user.email.strip()
+        try:
+            validate_email(email_address)
+        except ValidationError:
+            _finalize_delivery(delivery, EmailNotificationDelivery.STATUS_SKIPPED, "Recipient has no valid email address.")
+            logger.warning("Skipped notification email for user_id=%s because the address is missing or invalid.", delivery.user_id)
+            continue
+        try:
+            subject, body = _event_message(delivery.event, delivery.notification_type)
+            message = EmailMessage(
+                subject=subject, body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email_address], connection=get_connection()
             )
-            .order_by("id")
-        )
-        if not deliveries:
-            return 0
-
-        connection = get_connection()
-        sent_count = 0
-        for delivery in deliveries:
-            delivery.attempts += 1
-            delivery.last_attempt_at = timezone.now()
-            email_address = delivery.user.email.strip()
-            try:
-                validate_email(email_address)
-            except ValidationError:
-                delivery.status = EmailNotificationDelivery.STATUS_SKIPPED
-                delivery.last_error = "Recipient has no valid email address."
-                delivery.save(update_fields=["attempts", "last_attempt_at", "status", "last_error"])
-                logger.warning(
-                    "Skipped notification email for user_id=%s because the address is missing or invalid.",
-                    delivery.user_id,
-                )
-                continue
-
-            try:
-                subject, body = _event_message(delivery.event, delivery.notification_type)
-                message = EmailMessage(
-                    subject=subject,
-                    body=body,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    to=[email_address],
-                    connection=connection,
-                )
-                if message.send() != 1:
-                    raise RuntimeError("Email backend did not report a successful delivery.")
-            except Exception as error:  # Email backends raise provider-specific exceptions.
-                delivery.status = EmailNotificationDelivery.STATUS_FAILED
-                delivery.last_error = type(error).__name__
-                delivery.save(update_fields=["attempts", "last_attempt_at", "status", "last_error"])
-                logger.exception("Notification email delivery failed for delivery_id=%s.", delivery.id)
-                continue
-
-            delivery.status = EmailNotificationDelivery.STATUS_SENT
-            delivery.sent_at = timezone.now()
-            delivery.last_error = ""
-            delivery.save(update_fields=["attempts", "last_attempt_at", "status", "sent_at", "last_error"])
+            if message.send() != 1:
+                raise RuntimeError("Email backend did not report a successful delivery.")
+        except Exception as error:  # Email backends raise provider-specific exceptions.
+            _finalize_delivery(delivery, EmailNotificationDelivery.STATUS_FAILED, type(error).__name__)
+            # Provider exception messages may contain addresses or credentials.
+            logger.error("Notification email delivery failed for delivery_id=%s (%s).", delivery.id, type(error).__name__)
+            continue
+        if _finalize_delivery(delivery, EmailNotificationDelivery.STATUS_SENT):
             sent_count += 1
-        return sent_count
+    return sent_count

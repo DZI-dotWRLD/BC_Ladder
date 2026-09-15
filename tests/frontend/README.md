@@ -9,6 +9,13 @@ Coverage: login/registration/reset, Dashboard/Team composition, three Play entry
 routes, scorecard links, centred VS, ladder division switching, navigation,
 field-description targets, page overflow at 320/390/768/1024/1440px, a real invalid
 availability POST, failed-fragment fallback and no-JavaScript fallback.
+The suite also scrolls deferred sections into view, follows the keyboard skip
+link, and submits matching scores as both selected teams to verify waiting,
+opponent-action and official-result presentation. It mutates only demo matches
+in the disposable database; reseed a fresh database before repeating it.
+Composed-shell pagination uses controlled links injected into real Django
+fragment responses, then clicks them to verify real source-route page GETs.
+This browser fixture does not create extra domain matches or suggestions.
 Screenshots and server logs are uploaded for seven days, including on failure.
 Screenshots are evidence, not approved visual-diff baselines. Firefox/Safari,
 every button/state and visual taste are not covered by this smoke suite.

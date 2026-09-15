@@ -3,7 +3,15 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import get_user_model
 
 from .models import PlayerProfile, Team
-from .services import CLUB_TIMEZONE
+from .registration import EMAIL_CONFLICT, users_with_email
+
+
+class SuggestionAcceptanceForm(forms.Form):
+    version = forms.IntegerField(min_value=1, max_value=2147483647)
+
+
+class CandidateCommandForm(forms.Form):
+    candidate = forms.CharField(max_length=8192, widget=forms.HiddenInput)
 
 
 class AvailabilityForm(forms.Form):
@@ -15,12 +23,6 @@ class AvailabilityForm(forms.Form):
         input_formats=["%Y-%m-%dT%H:%M"],
         widget=forms.DateTimeInput(attrs={"type": "datetime-local"}),
     )
-
-    def clean_starts_at(self):
-        return self.cleaned_data["starts_at"].replace(tzinfo=CLUB_TIMEZONE)
-
-    def clean_ends_at(self):
-        return self.cleaned_data["ends_at"].replace(tzinfo=CLUB_TIMEZONE)
 
 
 class TeamJoinForm(forms.Form):
@@ -76,8 +78,8 @@ class PlayerRegistrationForm(UserCreationForm):
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()
-        if get_user_model().objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError("An account with this email address already exists.")
+        if users_with_email(email).exists():
+            raise forms.ValidationError(EMAIL_CONFLICT)
         return email
 
 

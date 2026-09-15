@@ -59,7 +59,27 @@ failed rows with:
 ```
 
 Schedule that command through the deployment platform for recovery after a
-process interruption. Rows skipped because a user has no valid email address
+process interruption. The command automatically recovers expired `sending`
+claims, even without retry flags. Schedule `send_notification_emails --retry-failed`
+at an operator-approved interval; no separate worker dependency is required.
+Claims last at least five minutes (or three times `EMAIL_TIMEOUT`, whichever is
+longer; configure via `DJANGO_EMAIL_TIMEOUT`), and only one message is claimed
+at a time. SMTP runs without an open
+database transaction or row lock; token-checked completion cannot overwrite a
+newer worker's claim. Attempts count claims, including interrupted attempts.
+
+Delivery is at-least-once, not exactly-once: a crash after SMTP acceptance but
+before recording success, or a send exceeding its lease, can produce duplicates
+on recovery. Set a finite SMTP timeout comfortably below the lease and monitor
+failed/skipped deliveries and expired claims in read-only Django admin. `sent`
+means the backend reported acceptance, not guaranteed inbox arrival. Queue rows
+and recipient-user snapshots remain historical; retries read the user's current
+email address so administrator corrections take effect. Never place provider
+credentials or recipient addresses in logs or workflow metadata.
+
+Deploy this schema migration before the new worker code. Do not roll back to
+the old transaction-held SMTP sender while new workers have live claims; pause
+delivery and resolve claims first. Rows skipped because a user has no valid email address
 require correcting the user's email, then running:
 
 ```powershell

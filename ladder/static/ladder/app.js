@@ -41,6 +41,13 @@
             if (!fragment) throw new Error("Section unavailable");
             const content = document.importNode(fragment, true);
             content.querySelectorAll("script").forEach((script) => script.remove());
+            // Query-only links belong to the fetched section, not its embedding page.
+            // URL resolution deliberately replaces the source query rather than
+            // inheriting discovery or unrelated dashboard parameters.
+            content.querySelectorAll('a[href^="?"]').forEach((link) => {
+                const destination = new URL(link.getAttribute("href"), url);
+                link.setAttribute("href", destination.pathname + destination.search + destination.hash);
+            });
             content.querySelectorAll("form").forEach((form) => {
                 if (!form.hasAttribute("action")) form.setAttribute("action", url.pathname);
             });
@@ -52,7 +59,19 @@
         } finally { slot.removeAttribute("aria-busy"); }
     };
 
-    Promise.all(sections.map(loadSection)).then(() => {
+    // At most the fixed shell sections are composed; defer offscreen reads until needed.
+    const deferred = new Set(sections);
+    const observer = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
+        entries.filter((entry) => entry.isIntersecting).forEach((entry) => {
+            if (deferred.delete(entry.target)) loadSection(entry.target);
+            observer.unobserve(entry.target);
+        });
+    }, { rootMargin: "200px" }) : null;
+    const initialLoads = sections.filter((slot) => !observer || slot.id === window.location.hash.slice(1) ||
+        slot.getBoundingClientRect().top < window.innerHeight + 200);
+    initialLoads.forEach((slot) => deferred.delete(slot));
+    deferred.forEach((slot) => observer.observe(slot));
+    Promise.all(initialLoads.map(loadSection)).then(() => {
         for (const name of ["availability", "suggestions", "matches", "team"]) {
             const target = document.getElementById(name);
             if (target?.querySelector('[data-fragment="' + name + '"]')) {

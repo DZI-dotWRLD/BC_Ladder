@@ -1,11 +1,11 @@
 from django.core.management.base import BaseCommand
 
-from ladder.email_notifications import deliver_event_email_notifications
+from ladder.email_notifications import deliver_event_email_notifications, eligible_deliveries
 from ladder.models import EmailNotificationDelivery
 
 
 class Command(BaseCommand):
-    help = "Send pending notification emails and optionally retry failed deliveries."
+    help = "Send pending notification emails, recover expired claims, and optionally retry failed or skipped deliveries."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -25,9 +25,7 @@ class Command(BaseCommand):
             statuses.append(EmailNotificationDelivery.STATUS_FAILED)
         if options["retry_skipped"]:
             statuses.append(EmailNotificationDelivery.STATUS_SKIPPED)
-        event_ids = list(
-            EmailNotificationDelivery.objects.filter(status__in=statuses).order_by("event_id").values_list("event_id", flat=True).distinct()
-        )
+        event_ids = list(eligible_deliveries(statuses).order_by("event_id").values_list("event_id", flat=True).distinct())
         sent_count = sum(
             deliver_event_email_notifications(
                 event_id,

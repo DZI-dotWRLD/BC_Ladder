@@ -788,11 +788,13 @@ class EmailNotificationDelivery(models.Model):
     ]
 
     STATUS_PENDING = "pending"
+    STATUS_SENDING = "sending"
     STATUS_SENT = "sent"
     STATUS_FAILED = "failed"
     STATUS_SKIPPED = "skipped"
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
+        (STATUS_SENDING, "Sending"),
         (STATUS_SENT, "Sent"),
         (STATUS_FAILED, "Failed"),
         (STATUS_SKIPPED, "Skipped"),
@@ -806,7 +808,9 @@ class EmailNotificationDelivery(models.Model):
     )
     notification_type = models.CharField(max_length=40, choices=TYPE_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
-    attempts = models.PositiveSmallIntegerField(default=0)
+    attempts = models.PositiveIntegerField(default=0)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    claim_expires_at = models.DateTimeField(null=True, blank=True)
     last_error = models.CharField(max_length=160, blank=True)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
@@ -814,7 +818,10 @@ class EmailNotificationDelivery(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["event", "user"], name="unique_email_delivery_event_user")]
-        indexes = [models.Index(fields=["status", "created_at"], name="email_delivery_status_idx")]
+        indexes = [
+            models.Index(fields=["status", "created_at"], name="email_delivery_status_idx"),
+            models.Index(fields=["status", "claim_expires_at"], name="email_delivery_claim_idx"),
+        ]
 
     def __str__(self):
         return f"{self.get_notification_type_display()} email to user {self.user_id}: {self.status}"

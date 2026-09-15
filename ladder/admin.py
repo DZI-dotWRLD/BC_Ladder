@@ -28,23 +28,36 @@ from .models import (
 )
 
 
-class PlayerProfileInline(admin.TabularInline):
-    model = PlayerProfile
-    extra = 0
+class WorkflowOwnedAdmin(admin.ModelAdmin):
+    """Inspect service-owned history without offering direct ORM writes."""
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_operate_permission(self, request):
+        # Preserve the original change-permission gate for audited service actions.
+        return super().has_change_permission(request)
 
 
 class TeamAdmin(admin.ModelAdmin):
-    inlines = [PlayerProfileInline]
+    inlines = ()
     list_display = ("name", "division", "status", "created_at")
     list_filter = ("division", "status")
 
 
 class PlayerProfileAdmin(admin.ModelAdmin):
+    readonly_fields = ("team",)
     list_display = ("user", "gender", "team", "created_at")
     list_select_related = ("user", "team")
 
 
-class TeamMembershipAdmin(admin.ModelAdmin):
+class TeamMembershipAdmin(WorkflowOwnedAdmin):
     list_display = (
         "player",
         "team",
@@ -67,7 +80,7 @@ class TeamMembershipAdmin(admin.ModelAdmin):
     def is_pending_removal_request(self, obj):
         return obj.removal_requested_at is not None and obj.status == TeamMembership.STATUS_ACTIVE
 
-    @admin.action(description="Approve selected join requests")
+    @admin.action(description="Approve selected join requests", permissions=["operate"])
     def approve_join_requests(self, request, queryset):
         completed = 0
         for membership in queryset.filter(status=TeamMembership.STATUS_JOIN_REQUESTED):
@@ -78,7 +91,7 @@ class TeamMembershipAdmin(admin.ModelAdmin):
                 self.message_user(request, str(error), level=messages.ERROR)
         self.message_user(request, f"Approved {completed} join request(s).")
 
-    @admin.action(description="Reject selected join requests")
+    @admin.action(description="Reject selected join requests", permissions=["operate"])
     def reject_join_requests(self, request, queryset):
         completed = 0
         for membership in queryset.filter(status=TeamMembership.STATUS_JOIN_REQUESTED):
@@ -89,7 +102,7 @@ class TeamMembershipAdmin(admin.ModelAdmin):
                 self.message_user(request, str(error), level=messages.ERROR)
         self.message_user(request, f"Rejected {completed} join request(s).")
 
-    @admin.action(description="Approve selected removal requests")
+    @admin.action(description="Approve selected removal requests", permissions=["operate"])
     def approve_removal_requests(self, request, queryset):
         completed = 0
         for membership in queryset.filter(removal_requested_at__isnull=False):
@@ -100,7 +113,7 @@ class TeamMembershipAdmin(admin.ModelAdmin):
                 self.message_user(request, str(error), level=messages.ERROR)
         self.message_user(request, f"Approved {completed} removal request(s).")
 
-    @admin.action(description="Reject selected removal requests")
+    @admin.action(description="Reject selected removal requests", permissions=["operate"])
     def reject_removal_requests(self, request, queryset):
         completed = 0
         for membership in queryset.filter(removal_requested_at__isnull=False):
@@ -115,7 +128,7 @@ class TeamMembershipAdmin(admin.ModelAdmin):
         return False
 
 
-class LadderStandingAdmin(admin.ModelAdmin):
+class LadderStandingAdmin(WorkflowOwnedAdmin):
     list_display = ("position", "team", "points", "wins", "losses", "matches_played", "updated_at")
     ordering = ("position",)
     list_select_related = ("team",)
@@ -125,7 +138,7 @@ class LadderStandingAdmin(admin.ModelAdmin):
         return False
 
 
-class AvailabilitySlotAdmin(admin.ModelAdmin):
+class AvailabilitySlotAdmin(WorkflowOwnedAdmin):
     list_display = (
         "player",
         "week_start_date",
@@ -142,7 +155,7 @@ class AvailabilitySlotAdmin(admin.ModelAdmin):
     ordering = ("starts_at", "week_start_date", "day_of_week", "start_time")
 
 
-class ChallengeAdmin(admin.ModelAdmin):
+class ChallengeAdmin(WorkflowOwnedAdmin):
     list_display = (
         "challenger_team",
         "opponent_team",
@@ -157,7 +170,7 @@ class ChallengeAdmin(admin.ModelAdmin):
     ordering = ("proposed_week_start_date", "proposed_day_of_week", "proposed_start_time")
 
 
-class MatchAdmin(admin.ModelAdmin):
+class MatchAdmin(WorkflowOwnedAdmin):
     list_display = (
         "team_a",
         "team_b",
@@ -175,7 +188,7 @@ class MatchAdmin(admin.ModelAdmin):
     ordering = ("scheduled_starts_at", "scheduled_week_start_date", "scheduled_day_of_week", "scheduled_start_time")
     actions = ("cancel_selected_matches",)
 
-    @admin.action(description="Cancel selected scheduled matches")
+    @admin.action(description="Cancel selected scheduled matches", permissions=["operate"])
     def cancel_selected_matches(self, request, queryset):
         completed = 0
         for match in queryset:
@@ -190,7 +203,7 @@ class MatchAdmin(admin.ModelAdmin):
         return False
 
 
-class MatchResultSubmissionAdmin(admin.ModelAdmin):
+class MatchResultSubmissionAdmin(WorkflowOwnedAdmin):
     list_display = (
         "match",
         "submitting_team",
@@ -204,7 +217,7 @@ class MatchResultSubmissionAdmin(admin.ModelAdmin):
     readonly_fields = ("match", "submitting_team", "submitting_user", "team_a_sets_won", "team_b_sets_won", "created_at", "updated_at")
     actions = ("use_selected_submission_as_official_score",)
 
-    @admin.action(description="Use selected submission as official score")
+    @admin.action(description="Use selected submission as official score", permissions=["operate"])
     def use_selected_submission_as_official_score(self, request, queryset):
         completed = 0
         for submission in queryset.select_related("match"):
@@ -223,7 +236,7 @@ class MatchResultSubmissionAdmin(admin.ModelAdmin):
         self.message_user(request, f"Resolved {completed} score conflict(s).")
 
 
-class AdminNotificationAdmin(admin.ModelAdmin):
+class AdminNotificationAdmin(WorkflowOwnedAdmin):
     list_display = (
         "match",
         "notification_type",
@@ -237,25 +250,25 @@ class AdminNotificationAdmin(admin.ModelAdmin):
     ordering = ("is_resolved", "-created_at")
 
 
-class MatchSuggestionAdmin(admin.ModelAdmin):
+class MatchSuggestionAdmin(WorkflowOwnedAdmin):
     list_display = ("team_a", "team_b", "starts_at", "ends_at", "status", "version", "expires_at")
     list_filter = ("status", "team_a__division")
     list_select_related = ("team_a", "team_b")
     readonly_fields = ("status", "version", "created_at", "updated_at")
 
 
-class SuggestionParticipantAdmin(admin.ModelAdmin):
+class SuggestionParticipantAdmin(WorkflowOwnedAdmin):
     list_display = ("suggestion", "side", "lineup_order", "team", "player")
     list_select_related = ("suggestion", "team", "player__user")
 
 
-class SuggestionAcceptanceAdmin(admin.ModelAdmin):
+class SuggestionAcceptanceAdmin(WorkflowOwnedAdmin):
     list_display = ("suggestion", "team", "accepted_by", "accepted_version", "created_at")
     list_select_related = ("suggestion", "team", "accepted_by")
     readonly_fields = ("suggestion", "team", "accepted_by", "accepted_version", "created_at")
 
 
-class MatchParticipantAdmin(admin.ModelAdmin):
+class MatchParticipantAdmin(WorkflowOwnedAdmin):
     list_display = ("match", "side", "lineup_order", "team", "player")
     list_select_related = ("match", "team", "player__user")
     readonly_fields = ("match", "side", "lineup_order", "team", "player")
@@ -264,7 +277,7 @@ class MatchParticipantAdmin(admin.ModelAdmin):
         return False
 
 
-class MatchReservationAdmin(admin.ModelAdmin):
+class MatchReservationAdmin(WorkflowOwnedAdmin):
     list_display = ("match", "player", "starts_at", "ends_at", "status")
     list_filter = ("status",)
     list_select_related = ("match", "player__user", "availability")
@@ -274,7 +287,7 @@ class MatchReservationAdmin(admin.ModelAdmin):
         return False
 
 
-class MatchResultSetAdmin(admin.ModelAdmin):
+class MatchResultSetAdmin(WorkflowOwnedAdmin):
     list_display = ("submission", "set_order", "set_type", "team_a_score", "team_b_score")
     list_select_related = ("submission",)
     readonly_fields = ("submission", "set_order", "set_type", "team_a_score", "team_b_score")
@@ -283,7 +296,7 @@ class MatchResultSetAdmin(admin.ModelAdmin):
         return False
 
 
-class ConfirmedMatchResultAdmin(admin.ModelAdmin):
+class ConfirmedMatchResultAdmin(WorkflowOwnedAdmin):
     list_display = ("match", "winning_team", "losing_team", "confirmed_at")
     list_select_related = ("match", "winning_team", "losing_team", "confirmed_from_submission")
     readonly_fields = ("match", "winning_team", "losing_team", "confirmed_from_submission", "confirmed_at")
@@ -292,7 +305,7 @@ class ConfirmedMatchResultAdmin(admin.ModelAdmin):
         return False
 
 
-class PointLedgerAdmin(admin.ModelAdmin):
+class PointLedgerAdmin(WorkflowOwnedAdmin):
     list_display = ("match", "team", "points_delta", "reason", "created_at")
     list_select_related = ("match", "team")
     readonly_fields = ("match", "team", "points_delta", "reason", "created_at")
@@ -301,7 +314,7 @@ class PointLedgerAdmin(admin.ModelAdmin):
         return False
 
 
-class ScoreCorrectionAuditAdmin(admin.ModelAdmin):
+class ScoreCorrectionAuditAdmin(WorkflowOwnedAdmin):
     list_display = (
         "match",
         "corrected_by",
@@ -398,10 +411,12 @@ class WorkflowEventRecipientAdmin(admin.ModelAdmin):
 
 
 class EmailNotificationDeliveryAdmin(admin.ModelAdmin):
-    list_display = ("notification_type", "user", "status", "attempts", "last_attempt_at", "sent_at")
+    list_display = ("notification_type", "user", "status", "attempts", "last_attempt_at", "claim_expires_at", "sent_at")
     list_filter = ("notification_type", "status", "created_at")
     list_select_related = ("event", "user")
     readonly_fields = (
+        "claim_token",
+        "claim_expires_at",
         "event",
         "user",
         "notification_type",
