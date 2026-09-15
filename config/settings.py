@@ -72,7 +72,7 @@ DEVELOPMENT_SECRET_KEY = "bc-ladder-development-only-secret-key"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEVELOPMENT_SECRET_KEY)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool("DJANGO_DEBUG", True)
+DEBUG = env_bool("DJANGO_DEBUG", False)
 
 ALLOWED_HOSTS = build_allowed_hosts(
     explicit_hosts=os.environ.get("DJANGO_ALLOWED_HOSTS"),

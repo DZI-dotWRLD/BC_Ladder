@@ -18,6 +18,10 @@ Copy-Item .env.example .env
 .\venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
 ```
 
+Copying `.env.example` is what explicitly enables `DEBUG` for local development.
+If `DJANGO_DEBUG` is unset, the application now fails closed and refuses to
+start until all required production settings are valid.
+
 Open:
 
 ```text
