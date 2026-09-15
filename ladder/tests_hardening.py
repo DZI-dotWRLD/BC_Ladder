@@ -1,8 +1,16 @@
 import os
 import subprocess
 import sys
+from datetime import date, time
 
-from django.test import SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.contrib.messages import get_messages
+from django.test import SimpleTestCase, TestCase
+from django.urls import reverse
+
+from .forms import ScoreSubmissionForm
+from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, Team
+from .services import InvalidInput, validate_match_score
 
 
 class FailClosedSettingsTests(SimpleTestCase):
@@ -39,3 +47,61 @@ class FailClosedSettingsTests(SimpleTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ImproperlyConfigured", result.stderr)
         self.assertIn("Unsafe production settings", result.stderr)
+
+
+class ScoreInputBoundsTests(TestCase):
+    def test_service_rejects_oversized_match_tiebreak(self):
+        with self.assertRaises(InvalidInput):
+            validate_match_score([(6, 0), (0, 6), (40000, 0)])
+
+    def test_form_rejects_oversized_score(self):
+        form = ScoreSubmissionForm(
+            {
+                "set1_team_a": 6,
+                "set1_team_b": 0,
+                "set2_team_a": 0,
+                "set2_team_b": 6,
+                "set3_team_a": 40000,
+                "set3_team_b": 0,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("set3_team_a", form.errors)
+
+    def test_oversized_score_post_redirects_with_error(self):
+        user = get_user_model().objects.create_user("score-bounds-player")
+        team_a = Team.objects.create(name="Score Bounds A", division=Team.DIVISION_MENS)
+        team_b = Team.objects.create(name="Score Bounds B", division=Team.DIVISION_MENS)
+        profile = PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE, team=team_a)
+        match = Match.objects.create(
+            team_a=team_a,
+            team_b=team_b,
+            scheduled_week_start_date=date(2026, 9, 14),
+            scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            scheduled_start_time=time(18),
+            scheduled_end_time=time(20),
+        )
+        MatchParticipant.objects.create(
+            match=match,
+            team=team_a,
+            player=profile,
+            side=MatchParticipant.SIDE_A,
+            lineup_order=1,
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(
+            reverse("ladder:submit_score", args=[match.pk]),
+            {
+                "set1_team_a": 6,
+                "set1_team_b": 0,
+                "set2_team_a": 0,
+                "set2_team_b": 6,
+                "set3_team_a": 40000,
+                "set3_team_b": 0,
+            },
+        )
+
+        self.assertRedirects(response, reverse("ladder:match_detail", args=[match.pk]), fetch_redirect_response=False)
+        self.assertEqual([str(message) for message in get_messages(response.wsgi_request)], ["Enter valid numeric scores."])

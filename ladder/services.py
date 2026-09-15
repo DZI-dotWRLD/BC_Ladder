@@ -1403,6 +1403,8 @@ def validate_regular_set(team_a_games, team_b_games):
 def validate_match_tiebreak(team_a_points, team_b_points):
     if not isinstance(team_a_points, int) or not isinstance(team_b_points, int):
         raise InvalidInput("Tie-break scores must be integers.")
+    if team_a_points > 99 or team_b_points > 99:
+        raise InvalidInput("Tie-break scores cannot exceed 99 points.")
     if team_a_points < 0 or team_b_points < 0 or team_a_points == team_b_points:
         raise InvalidInput("Tie-break scores must be non-negative and cannot be tied.")
     if max(team_a_points, team_b_points) < 10 or abs(team_a_points - team_b_points) < 2:
