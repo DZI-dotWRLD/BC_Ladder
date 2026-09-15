@@ -470,12 +470,8 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         for position, team in enumerate((team_a, team_b, team_c), start=1):
             LadderStanding.objects.create(team=team, position=position)
 
-        first = self.create_scheduled_match(
-            team_a, team_b, self.make_dt(2027, 9, 5, 18), self.make_dt(2027, 9, 5, 20)
-        )
-        second = self.create_scheduled_match(
-            team_b, team_c, self.make_dt(2027, 9, 6, 18), self.make_dt(2027, 9, 6, 20)
-        )
+        first = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 5, 18), self.make_dt(2027, 9, 5, 20))
+        second = self.create_scheduled_match(team_b, team_c, self.make_dt(2027, 9, 6, 18), self.make_dt(2027, 9, 6, 20))
         self.add_match_participants(first, team_a_players, team_b_players)
         self.add_match_participants(second, team_b_players, team_c_players)
         for match, winner, loser, winner_player, loser_player in (
