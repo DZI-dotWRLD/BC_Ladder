@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import PasswordResetView
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import Case, IntegerField, Q, Value, When
@@ -40,6 +41,7 @@ from .registration import (
 )
 from .services import (
     DomainError,
+    InvalidInput,
     accept_suggestion,
     cancel_availability,
     cancel_join_request,
@@ -50,10 +52,26 @@ from .services import (
     generate_team_lineups,
     get_match_status,
     request_membership_change,
+    enforce_rate_limit,
+    rate_limit_key,
     save_availability,
     sign_candidate,
     submit_match_result,
 )
+
+
+class RateLimitedPasswordResetView(PasswordResetView):
+    """Keep reset responses uniform while suppressing mail above DB limits."""
+
+    def form_valid(self, form):
+        email = form.cleaned_data["email"].strip().lower()
+        ip_address = self.request.META.get("REMOTE_ADDR", "unknown")
+        try:
+            enforce_rate_limit(rate_limit_key("password-reset-ip", ip_address), 10, timedelta(hours=1))
+            enforce_rate_limit(rate_limit_key("password-reset-email", email), 3, timedelta(hours=1))
+        except InvalidInput:
+            return redirect(self.get_success_url())
+        return super().form_valid(form)
 
 
 def _profile_for_request(request):
@@ -327,9 +345,17 @@ def resend_verification(request):
         return redirect("ladder:verification_sent")
     form = VerificationResendForm(request.POST)
     if form.is_valid():
-        user = users_with_email(form.cleaned_data["email"]).filter(is_active=False).first()
-        if user is not None:
-            send_verification_email(request, user)
+        email = form.cleaned_data["email"]
+        ip_address = request.META.get("REMOTE_ADDR", "unknown")
+        try:
+            enforce_rate_limit(rate_limit_key("verification-resend-ip", ip_address), 10, timedelta(hours=1))
+            enforce_rate_limit(rate_limit_key("verification-resend-email", email), 3, timedelta(hours=1))
+        except InvalidInput:
+            pass
+        else:
+            user = users_with_email(email).filter(is_active=False).first()
+            if user is not None:
+                send_verification_email(request, user)
     messages.success(request, "If that account still needs verification, a new link is on its way.")
     return redirect("ladder:verification_sent")
 
@@ -339,7 +365,15 @@ def verify_account(request, uidb64, token):
         user = activate_user_from_token(uidb64, token)
     except VerificationFailure:
         return render(request, "registration/verification_invalid.html", status=400)
-    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    original_path_info = request.META.get("PATH_INFO")
+    request.META["PATH_INFO"] = "/accounts/verify/"
+    try:
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    finally:
+        if original_path_info is None:
+            request.META.pop("PATH_INFO", None)
+        else:
+            request.META["PATH_INFO"] = original_path_info
     messages.success(request, "Email verified. Your account is active.")
     return redirect("ladder:dashboard")
 

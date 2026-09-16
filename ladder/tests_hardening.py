@@ -1,15 +1,18 @@
 import os
 import subprocess
 import sys
-from datetime import date, time
+from datetime import date, time, timedelta
+from io import StringIO
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
+from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from .forms import ScoreSubmissionForm
-from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, Team
+from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, RateLimitEvent, Team
 from .services import InvalidInput, validate_match_score
 
 
@@ -105,3 +108,37 @@ class ScoreInputBoundsTests(TestCase):
 
         self.assertRedirects(response, reverse("ladder:match_detail", args=[match.pk]), fetch_redirect_response=False)
         self.assertEqual([str(message) for message in get_messages(response.wsgi_request)], ["Enter valid numeric scores."])
+
+
+class BruteForceProtectionTests(TestCase):
+    def test_five_failed_logins_lock_username(self):
+        user = get_user_model().objects.create_user("locked-player", password="CorrectPass123!")
+        PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE)
+        response = None
+        for _ in range(5):
+            response = self.client.post(
+                reverse("ladder:login"),
+                {"username": user.username, "password": "wrong-password"},
+                REMOTE_ADDR="198.51.100.10",
+            )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertContains(response, "Too many", status_code=429)
+        correct_from_another_ip = self.client.post(
+            reverse("ladder:login"),
+            {"username": user.username, "password": "CorrectPass123!"},
+            REMOTE_ADDR="198.51.100.11",
+        )
+        self.assertEqual(correct_from_another_ip.status_code, 429)
+
+    def test_purge_rate_limit_events_removes_only_expired_rows(self):
+        old = RateLimitEvent.objects.create(key="old")
+        current = RateLimitEvent.objects.create(key="current")
+        RateLimitEvent.objects.filter(pk=old.pk).update(created_at=timezone.now() - timedelta(hours=25))
+        output = StringIO()
+
+        call_command("purge_rate_limit_events", stdout=output)
+
+        self.assertFalse(RateLimitEvent.objects.filter(pk=old.pk).exists())
+        self.assertTrue(RateLimitEvent.objects.filter(pk=current.pk).exists())
+        self.assertIn("Deleted 1", output.getvalue())

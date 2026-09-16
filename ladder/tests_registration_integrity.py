@@ -15,6 +15,7 @@ from django.db import IntegrityError, close_old_connections, connection, transac
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from axes.models import AccessLog
 
 from ladder.forms import PlayerRegistrationForm
 from ladder.models import EmailNotificationDelivery, InviteCode, PlayerProfile, WorkflowEvent
@@ -118,6 +119,8 @@ class RegistrationIntegrityTests(TestCase):
         self.assertEqual(second.status_code, 400)
         self.assertEqual(WorkflowEvent.objects.count(), 0)
         self.assertEqual(EmailNotificationDelivery.objects.count(), 0)
+        self.assertEqual(list(AccessLog.objects.values_list("path_info", flat=True)), ["/accounts/verify/"])
+        self.assertFalse(AccessLog.objects.filter(path_info__contains=verification_url.rsplit("/", 2)[-2]).exists())
 
     def test_create_invite_codes_command_uses_superuser_attribution(self):
         output = StringIO()
@@ -130,6 +133,22 @@ class RegistrationIntegrityTests(TestCase):
         self.assertTrue(all(invite.max_uses == 3 for invite in created))
         self.assertTrue(all(invite.expires_at > timezone.now() for invite in created))
         self.assertEqual(len([line for line in output.getvalue().splitlines() if line]), 2)
+
+    def test_verification_resend_is_throttled_without_disclosing_account(self):
+        self.client.post(reverse("ladder:register"), payload())
+        mail.outbox.clear()
+        response = None
+        for _ in range(4):
+            response = self.client.post(
+                reverse("ladder:resend_verification"),
+                {"email": "PLAYER@example.com"},
+                REMOTE_ADDR="198.51.100.30",
+            )
+
+        self.assertRedirects(response, reverse("ladder:verification_sent"))
+        self.assertEqual(len(mail.outbox), 3)
+        self.assertEqual(WorkflowEvent.objects.count(), 0)
+        self.assertEqual(EmailNotificationDelivery.objects.count(), 0)
 
     def test_prevalidation_handles_legacy_whitespace(self):
         get_user_model().objects.create(username="existing", email=" Player@Example.com ")

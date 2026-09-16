@@ -68,6 +68,10 @@ at a time. SMTP runs without an open
 database transaction or row lock; token-checked completion cannot overwrite a
 newer worker's claim. Attempts count claims, including interrupted attempts.
 
+Schedule `python manage.py purge_rate_limit_events` daily. It removes only
+throttle events older than 24 hours; current login lockouts remain managed by
+django-axes and its one-hour cool-off.
+
 Delivery is at-least-once, not exactly-once: a crash after SMTP acceptance but
 before recording success, or a send exceeding its lease, can produce duplicates
 on recovery. Set a finite SMTP timeout comfortably below the lease and monitor

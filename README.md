@@ -73,6 +73,7 @@ instead of creating duplicates.
 .\venv\Scripts\python.exe manage.py reconcile_standings
 .\venv\Scripts\python.exe manage.py audit_data_integrity
 .\venv\Scripts\python.exe manage.py create_invite_codes --count 5
+.\venv\Scripts\python.exe manage.py purge_rate_limit_events
 git diff --check
 ```
 

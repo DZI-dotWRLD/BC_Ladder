@@ -2397,6 +2397,20 @@ class PasswordResetRequestTests(TestCase):
         self.assertNotIn(self.user.username, message.body)
         self.assertIn("http://testserver/accounts/reset/", message.body)
 
+    def test_password_reset_above_email_limit_keeps_done_response_without_more_mail(self):
+        response = None
+        for _ in range(4):
+            response = self.client.post(
+                reverse("ladder:password_reset"),
+                {"email": self.user.email},
+                follow=True,
+                REMOTE_ADDR="198.51.100.20",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "If an active account matches that email address")
+        self.assertEqual(len(mail.outbox), 3)
+
     def test_unknown_and_inactive_accounts_receive_same_response_without_email(self):
         unknown_response = self.client.post(reverse("ladder:password_reset"), {"email": "unknown@example.com"})
         self.user.is_active = False

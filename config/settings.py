@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -85,6 +86,7 @@ CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 
 INSTALLED_APPS = [
     "ladder",
+    "axes",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -102,7 +104,20 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
 ]
+
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = timedelta(hours=1)
+AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_HANDLER = "axes.handlers.database.AxesDatabaseHandler"
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_TEMPLATE = "registration/lockout.html"
 
 ROOT_URLCONF = "config.urls"
 

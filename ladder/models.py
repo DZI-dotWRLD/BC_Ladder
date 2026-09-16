@@ -34,6 +34,14 @@ class InviteCode(models.Model):
         return self.code
 
 
+class RateLimitEvent(models.Model):
+    key = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["key", "created_at"], name="rate_limit_key_time_idx")]
+
+
 class Team(models.Model):
     DIVISION_MENS = "mens"
     DIVISION_WOMENS = "womens"
