@@ -1,0 +1,13 @@
+{% extends "registration/login.html" %}
+
+{% block title %}Login temporarily unavailable | BC Ladder{% endblock %}
+
+{% block content %}
+<section class="auth-layout">
+    <div class="auth-form-panel">
+        <h1>Too many<br><em>attempts.</em></h1>
+        <p>Login is temporarily unavailable for this account or network. Try again in one hour.</p>
+        <div class="auth-links"><a href="{% url 'ladder:password_reset' %}">Reset your password</a></div>
+    </div>
+</section>
+{% endblock %}

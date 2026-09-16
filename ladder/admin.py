@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib import messages
+from django.utils import timezone
 
 from .services import DomainError, cancel_match, resolve_membership_request, resolve_score_conflict
 
@@ -9,6 +10,7 @@ from .models import (
     Challenge,
     ConfirmedMatchResult,
     EmailNotificationDelivery,
+    InviteCode,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -26,6 +28,32 @@ from .models import (
     WorkflowEvent,
     WorkflowEventRecipient,
 )
+
+
+class InviteCodeAdmin(admin.ModelAdmin):
+    list_display = ("code", "uses", "max_uses", "expires_at", "revoked_at", "created_by", "created_at")
+    list_filter = ("revoked_at", "expires_at", "created_at")
+    list_select_related = ("created_by",)
+    readonly_fields = ("uses", "created_by", "revoked_at", "created_at")
+    actions = ("revoke_invite_codes",)
+
+    def has_add_permission(self, request):
+        return request.user.is_staff
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_staff
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Revoke selected invite codes")
+    def revoke_invite_codes(self, request, queryset):
+        queryset.filter(revoked_at__isnull=True).update(revoked_at=timezone.now())
 
 
 class WorkflowOwnedAdmin(admin.ModelAdmin):
@@ -440,6 +468,7 @@ class EmailNotificationDeliveryAdmin(admin.ModelAdmin):
 
 
 admin.site.register(PlayerProfile, PlayerProfileAdmin)
+admin.site.register(InviteCode, InviteCodeAdmin)
 admin.site.register(Team, TeamAdmin)
 admin.site.register(TeamMembership, TeamMembershipAdmin)
 admin.site.register(LadderStanding, LadderStandingAdmin)

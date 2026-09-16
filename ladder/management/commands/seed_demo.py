@@ -1,8 +1,9 @@
 from datetime import datetime, time, timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.core.management.base import BaseCommand, CommandError
+from django.db import connection, transaction
 from django.utils import timezone
 
 from ladder.models import (
@@ -32,7 +33,21 @@ DEMO_PASSWORD = "DemoPass123!"
 class Command(BaseCommand):
     help = "Create deterministic local demo data for BC_ladder."
 
+    def add_arguments(self, parser):
+        parser.add_argument("--allow-non-debug", action="store_true")
+
     def handle(self, *args, **options):
+        allow_non_debug = options["allow_non_debug"]
+        if not settings.DEBUG and not allow_non_debug:
+            raise CommandError("seed_demo is disabled when DEBUG is false; pass --allow-non-debug to confirm intentional use.")
+        database_name = str(connection.settings_dict.get("NAME") or "").lower()
+        safe_database_markers = ("demo", "dev", "test", "ci")
+        if (
+            connection.vendor == "postgresql"
+            and not any(marker in database_name for marker in safe_database_markers)
+            and not allow_non_debug
+        ):
+            raise CommandError("seed_demo refuses to write to a non-demo PostgreSQL database without --allow-non-debug.")
         with transaction.atomic():
             self._user("demo-admin", is_staff=True, is_superuser=True)
             mens_players = self._players("mens", PlayerProfile.GENDER_MALE, 8)

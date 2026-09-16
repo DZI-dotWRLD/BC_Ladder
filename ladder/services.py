@@ -1,6 +1,7 @@
 from collections import defaultdict
 from bisect import bisect_left
 from datetime import datetime, timedelta, timezone as datetime_timezone
+from hashlib import sha256
 from itertools import combinations
 
 from django.core import signing
@@ -22,6 +23,7 @@ from .models import (
     MatchSuggestion,
     PlayerProfile,
     PointLedger,
+    RateLimitEvent,
     ScoreCorrectionAudit,
     SuggestionAcceptance,
     SuggestionParticipant,
@@ -64,6 +66,27 @@ class AuthorizationFailure(DomainError):
 
 class BookingCollision(DomainError):
     pass
+
+
+def rate_limit_key(scope, value):
+    """Return a stable opaque key so rate-limit storage contains no raw identity."""
+    digest = sha256(str(value).strip().lower().encode()).hexdigest()
+    return f"{scope}:{digest}"
+
+
+def enforce_rate_limit(key, limit, window):
+    """Record one allowed attempt or raise when the rolling DB window is full."""
+    if not key or limit < 1 or window <= timedelta(0):
+        raise InvalidInput("Invalid rate-limit configuration.")
+    cutoff = timezone.now() - window
+    with transaction.atomic():
+        if connection.vendor == "postgresql":
+            lock_id = int.from_bytes(sha256(key.encode()).digest()[:8], signed=True)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_id])
+        if RateLimitEvent.objects.filter(key=key, created_at__gte=cutoff).count() >= limit:
+            raise InvalidInput("Too many requests. Try again later.")
+        RateLimitEvent.objects.create(key=key)
 
 
 def _integrity_constraint_name(error):
@@ -1403,6 +1426,8 @@ def validate_regular_set(team_a_games, team_b_games):
 def validate_match_tiebreak(team_a_points, team_b_points):
     if not isinstance(team_a_points, int) or not isinstance(team_b_points, int):
         raise InvalidInput("Tie-break scores must be integers.")
+    if team_a_points > 99 or team_b_points > 99:
+        raise InvalidInput("Tie-break scores cannot exceed 99 points.")
     if team_a_points < 0 or team_b_points < 0 or team_a_points == team_b_points:
         raise InvalidInput("Tie-break scores must be non-negative and cannot be tied.")
     if max(team_a_points, team_b_points) < 10 or abs(team_a_points - team_b_points) < 2:

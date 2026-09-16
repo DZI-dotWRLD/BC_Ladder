@@ -18,6 +18,10 @@ Copy-Item .env.example .env
 .\venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
 ```
 
+Copying `.env.example` is what explicitly enables `DEBUG` for local development.
+If `DJANGO_DEBUG` is unset, the application now fails closed and refuses to
+start until all required production settings are valid.
+
 Open:
 
 ```text
@@ -68,6 +72,8 @@ instead of creating duplicates.
 .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
 .\venv\Scripts\python.exe manage.py reconcile_standings
 .\venv\Scripts\python.exe manage.py audit_data_integrity
+.\venv\Scripts\python.exe manage.py create_invite_codes --count 5
+.\venv\Scripts\python.exe manage.py purge_rate_limit_events
 git diff --check
 ```
 
@@ -141,6 +147,7 @@ DJANGO_EMAIL_HOST_USER
 DJANGO_EMAIL_HOST_PASSWORD
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL
+DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
 ```
 
 Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
@@ -167,13 +174,17 @@ SMTP variables shown in `.env.example`; use `DJANGO_EMAIL_USE_TLS=true` for
 STARTTLS (commonly port 587) or `DJANGO_EMAIL_USE_SSL=true` for implicit TLS
 (commonly port 465), but never both. Reset links expire after one hour by
 default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
+Notification outbox delivery defaults to `inline` with DEBUG or during tests
+and to `scheduled` otherwise. A production scheduler must run
+`python manage.py send_notification_emails --retry-failed` every minute.
 
 ## Current Limitations
 
 - SQLite is supported for local development. PostgreSQL is configured in CI for
   production-style transaction, range-overlap constraints, and concurrency
   verification.
-- Players may self-register. Selected lineup players, not unrelated teammates,
+- Players register with an administrator-issued invite code and activate their
+  account through a one-time email-verification link. Selected lineup players, not unrelated teammates,
   accept suggestions and submit scores.
 - Suggestions expire at the proposed match start time.
 - Equal-points ladder ordering is points, wins, fewer losses, then team name/id.

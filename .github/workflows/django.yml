@@ -68,6 +68,8 @@ jobs:
 
   sqlite:
     runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
 
     steps:
       - name: Check out repository
@@ -112,6 +114,7 @@ jobs:
           --health-retries 5
 
     env:
+      DJANGO_DEBUG: "true"
       DJANGO_DB_ENGINE: django.db.backends.postgresql
       DJANGO_DB_NAME: bc_ladder_ci
       DJANGO_DB_USER: bc_ladder

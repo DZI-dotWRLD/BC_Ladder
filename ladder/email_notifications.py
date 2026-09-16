@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -6,7 +7,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage, get_connection
 from django.core.validators import validate_email
-from django.db import connection, transaction
+from django.db import close_old_connections, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -21,7 +22,31 @@ def queue_email_notifications(event, recipient_user_ids, notification_type):
         for user_id in sorted(set(recipient_user_ids))
     ]
     EmailNotificationDelivery.objects.bulk_create(deliveries, ignore_conflicts=True)
-    transaction.on_commit(lambda: deliver_event_email_notifications(event.id), robust=True)
+    transaction.on_commit(lambda: _trigger_event_delivery(event.id), robust=True)
+
+
+def _trigger_event_delivery(event_id):
+    mode = settings.NOTIFICATION_DELIVERY_MODE
+    if mode == "inline":
+        deliver_event_email_notifications(event_id)
+    elif mode == "thread":
+        _start_delivery_thread(event_id)
+
+
+def _start_delivery_thread(event_id):
+    thread = threading.Thread(target=_deliver_event_in_thread, args=(event_id,), daemon=True, name=f"notification-event-{event_id}")
+    thread.start()
+    return thread
+
+
+def _deliver_event_in_thread(event_id):
+    close_old_connections()
+    try:
+        deliver_event_email_notifications(event_id)
+    except Exception as error:
+        logger.error("Notification delivery thread failed for event_id=%s (%s).", event_id, type(error).__name__)
+    finally:
+        connection.close()
 
 
 def _display_name(user):

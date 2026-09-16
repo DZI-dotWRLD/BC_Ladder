@@ -25,6 +25,7 @@ from .models import (
     Challenge,
     ConfirmedMatchResult,
     EmailNotificationDelivery,
+    InviteCode,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -1263,6 +1264,10 @@ class RemediationServiceTests(TestCase):
 class PhaseARequestTests(TestCase):
     club_tz = ZoneInfo("America/New_York")
 
+    def setUp(self):
+        inviter = get_user_model().objects.create_user(username="phase-a-invite-creator")
+        self.invite = InviteCode.objects.create(code="phase-a-invite", created_by=inviter, max_uses=10)
+
     def create_profile(self, username, gender=PlayerProfile.GENDER_MALE):
         user = get_user_model().objects.create_user(username=username, password="pass")
         return PlayerProfile.objects.create(user=user, gender=gender)
@@ -1313,12 +1318,14 @@ class PhaseARequestTests(TestCase):
 
         self.assertRedirects(response, reverse("ladder:dashboard"))
 
-    def test_self_registration_creates_user_profile_and_logs_in(self):
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_self_registration_creates_inactive_user_profile_and_sends_verification(self):
         response = self.client.post(
             reverse("ladder:register"),
             {
                 "username": "new-register",
                 "email": "New.Player@Example.com",
+                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -1326,10 +1333,12 @@ class PhaseARequestTests(TestCase):
         )
 
         user = get_user_model().objects.get(username="new-register")
-        self.assertRedirects(response, reverse("ladder:dashboard"))
+        self.assertRedirects(response, reverse("ladder:verification_sent"))
         self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
         self.assertEqual(user.email, "new.player@example.com")
-        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+        self.assertFalse(user.is_active)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertEqual(len(mail.outbox), 1)
 
     def test_self_registration_rejects_an_email_already_in_use(self):
         get_user_model().objects.create_user(username="existing", email="player@example.com", password="pass")
@@ -1339,6 +1348,7 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "duplicate-email",
                 "email": "PLAYER@example.com",
+                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -1355,6 +1365,7 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "no-email-register",
                 "email": "not-an-email",
+                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -2179,7 +2190,7 @@ class PhaseA5OperationsTests(TestCase):
         first_output = StringIO()
         second_output = StringIO()
 
-        call_command("seed_demo", stdout=first_output)
+        call_command("seed_demo", allow_non_debug=True, stdout=first_output)
         counts_after_first = {
             "users": get_user_model().objects.count(),
             "profiles": PlayerProfile.objects.count(),
@@ -2188,7 +2199,7 @@ class PhaseA5OperationsTests(TestCase):
             "standings": LadderStanding.objects.count(),
             "matches": Match.objects.count(),
         }
-        call_command("seed_demo", stdout=second_output)
+        call_command("seed_demo", allow_non_debug=True, stdout=second_output)
 
         self.assertEqual(counts_after_first["users"], get_user_model().objects.count())
         self.assertEqual(counts_after_first["profiles"], PlayerProfile.objects.count())
@@ -2207,6 +2218,13 @@ class PhaseA5OperationsTests(TestCase):
         ends_at = starts_at + timedelta(days=30)
         self.assertTrue(find_opponent_suggestions(demo_mens_team, (starts_at, ends_at)))
         self.assertIn("Demo data is ready", second_output.getvalue())
+
+    @override_settings(DEBUG=False)
+    def test_seed_demo_refuses_non_debug_without_override(self):
+        with self.assertRaisesRegex(CommandError, "disabled when DEBUG is false"):
+            call_command("seed_demo")
+
+        self.assertFalse(get_user_model().objects.filter(username__startswith="demo-").exists())
 
 
 class DataIntegrityAuditCommandTests(TestCase):
@@ -2386,6 +2404,20 @@ class PasswordResetRequestTests(TestCase):
         self.assertNotIn(self.user.username, message.body)
         self.assertIn("http://testserver/accounts/reset/", message.body)
 
+    def test_password_reset_above_email_limit_keeps_done_response_without_more_mail(self):
+        response = None
+        for _ in range(4):
+            response = self.client.post(
+                reverse("ladder:password_reset"),
+                {"email": self.user.email},
+                follow=True,
+                REMOTE_ADDR="198.51.100.20",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "If an active account matches that email address")
+        self.assertEqual(len(mail.outbox), 3)
+
     def test_unknown_and_inactive_accounts_receive_same_response_without_email(self):
         unknown_response = self.client.post(reverse("ladder:password_reset"), {"email": "unknown@example.com"})
         self.user.is_active = False
@@ -2515,6 +2547,41 @@ class EmailNotificationTests(TransactionTestCase):
                 self.assertIn(player.user.username, message.body)
         self.assertEqual(
             EmailNotificationDelivery.objects.filter(status=EmailNotificationDelivery.STATUS_SENT).count(),
+            4,
+        )
+
+    @override_settings(NOTIFICATION_DELIVERY_MODE="scheduled")
+    def test_scheduled_mode_leaves_delivery_pending_without_sending(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            suggestion, _players_a, _players_b = self.create_suggestion()
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(event__suggestion=suggestion, status=EmailNotificationDelivery.STATUS_PENDING).count(),
+            4,
+        )
+
+    @override_settings(NOTIFICATION_DELIVERY_MODE="thread")
+    def test_thread_mode_delivers_using_joined_worker(self):
+        threads = []
+        from .email_notifications import _start_delivery_thread as original_start
+
+        def capture_thread(event_id):
+            thread = original_start(event_id)
+            threads.append(thread)
+            return thread
+
+        with patch("ladder.email_notifications._start_delivery_thread", side_effect=capture_thread):
+            with self.captureOnCommitCallbacks(execute=True):
+                suggestion, _players_a, _players_b = self.create_suggestion()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertEqual(len(threads), 1)
+        self.assertFalse(threads[0].is_alive())
+        self.assertEqual(len(mail.outbox), 4)
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(event__suggestion=suggestion, status=EmailNotificationDelivery.STATUS_SENT).count(),
             4,
         )
 
