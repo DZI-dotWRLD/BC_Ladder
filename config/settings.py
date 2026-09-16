@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -213,6 +214,13 @@ EMAIL_USE_SSL = env_bool("DJANGO_EMAIL_USE_SSL", False)
 EMAIL_TIMEOUT = int(os.environ.get("DJANGO_EMAIL_TIMEOUT", "10"))
 DEFAULT_FROM_EMAIL = os.environ.get("DJANGO_DEFAULT_FROM_EMAIL", "BC Tennis Ladder <no-reply@localhost>")
 PASSWORD_RESET_TIMEOUT = int(os.environ.get("DJANGO_PASSWORD_RESET_TIMEOUT", "3600"))
+NOTIFICATION_DELIVERY_MODE = os.environ.get(
+    "DJANGO_NOTIFICATION_DELIVERY_MODE",
+    "inline" if DEBUG or "test" in sys.argv else "scheduled",
+).lower()
+
+if NOTIFICATION_DELIVERY_MODE not in {"inline", "thread", "scheduled"}:
+    raise ImproperlyConfigured("DJANGO_NOTIFICATION_DELIVERY_MODE must be inline, thread, or scheduled.")
 
 if EMAIL_USE_TLS and EMAIL_USE_SSL:
     raise ImproperlyConfigured("DJANGO_EMAIL_USE_TLS and DJANGO_EMAIL_USE_SSL cannot both be true.")

@@ -24,6 +24,7 @@ DJANGO_EMAIL_HOST_USER=<gmail-sender-address>
 DJANGO_EMAIL_HOST_PASSWORD=<gmail-app-password>
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL=BC Tennis Ladder <gmail-sender-address>
+DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
 ```
 
 `DATABASE_URL` is preferred for Render and other platforms that provide one
@@ -58,10 +59,10 @@ failed rows with:
 .\venv\Scripts\python.exe manage.py send_notification_emails --retry-failed
 ```
 
-Schedule that command through the deployment platform for recovery after a
-process interruption. The command automatically recovers expired `sending`
-claims, even without retry flags. Schedule `send_notification_emails --retry-failed`
-at an operator-approved interval; no separate worker dependency is required.
+In production `scheduled` mode, run that command every minute; the request
+process intentionally does not send notification mail. Treat a missing
+one-minute schedule as a release blocker. The command also recovers expired `sending`
+claims, even without retry flags; no separate worker dependency is required.
 Claims last at least five minutes (or three times `EMAIL_TIMEOUT`, whichever is
 longer; configure via `DJANGO_EMAIL_TIMEOUT`), and only one message is claimed
 at a time. SMTP runs without an open
@@ -129,7 +130,7 @@ The repository includes `render.yaml` for a first Render Blueprint deployment:
 - database: `bc-ladder-db`
 - runtime: Python
 - plan: Render Free for trial only
-- start command: `python -m gunicorn config.wsgi:application`
+- start command: `python -m gunicorn config.wsgi:application --workers 2 --threads 2 --timeout 30 --max-requests 500 --max-requests-jitter 50`
 - build command: `bash build.sh`
 - database configuration: `DATABASE_URL` from Render PostgreSQL
 

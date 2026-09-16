@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: bash build.sh
-    startCommand: python -m gunicorn config.wsgi:application
+    startCommand: python -m gunicorn config.wsgi:application --workers 2 --threads 2 --timeout 30 --max-requests 500 --max-requests-jitter 50
     envVars:
       - key: PYTHON_VERSION
         value: 3.14.6
@@ -40,6 +40,8 @@ services:
         sync: false
       - key: DJANGO_DEFAULT_FROM_EMAIL
         sync: false
+      - key: DJANGO_NOTIFICATION_DELIVERY_MODE
+        value: scheduled
 
 databases:
   - name: bc-ladder-db

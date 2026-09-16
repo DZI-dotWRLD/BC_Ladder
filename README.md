@@ -147,6 +147,7 @@ DJANGO_EMAIL_HOST_USER
 DJANGO_EMAIL_HOST_PASSWORD
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL
+DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
 ```
 
 Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
@@ -173,6 +174,9 @@ SMTP variables shown in `.env.example`; use `DJANGO_EMAIL_USE_TLS=true` for
 STARTTLS (commonly port 587) or `DJANGO_EMAIL_USE_SSL=true` for implicit TLS
 (commonly port 465), but never both. Reset links expire after one hour by
 default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
+Notification outbox delivery defaults to `inline` with DEBUG or during tests
+and to `scheduled` otherwise. A production scheduler must run
+`python manage.py send_notification_emails --retry-failed` every minute.
 
 ## Current Limitations
 

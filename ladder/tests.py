@@ -2550,6 +2550,41 @@ class EmailNotificationTests(TransactionTestCase):
             4,
         )
 
+    @override_settings(NOTIFICATION_DELIVERY_MODE="scheduled")
+    def test_scheduled_mode_leaves_delivery_pending_without_sending(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            suggestion, _players_a, _players_b = self.create_suggestion()
+
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(event__suggestion=suggestion, status=EmailNotificationDelivery.STATUS_PENDING).count(),
+            4,
+        )
+
+    @override_settings(NOTIFICATION_DELIVERY_MODE="thread")
+    def test_thread_mode_delivers_using_joined_worker(self):
+        threads = []
+        from .email_notifications import _start_delivery_thread as original_start
+
+        def capture_thread(event_id):
+            thread = original_start(event_id)
+            threads.append(thread)
+            return thread
+
+        with patch("ladder.email_notifications._start_delivery_thread", side_effect=capture_thread):
+            with self.captureOnCommitCallbacks(execute=True):
+                suggestion, _players_a, _players_b = self.create_suggestion()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertEqual(len(threads), 1)
+        self.assertFalse(threads[0].is_alive())
+        self.assertEqual(len(mail.outbox), 4)
+        self.assertEqual(
+            EmailNotificationDelivery.objects.filter(event__suggestion=suggestion, status=EmailNotificationDelivery.STATUS_SENT).count(),
+            4,
+        )
+
     def test_duplicate_match_request_does_not_queue_or_send_again(self):
         with self.captureOnCommitCallbacks(execute=True):
             suggestion, _players_a, _players_b = self.create_suggestion()
