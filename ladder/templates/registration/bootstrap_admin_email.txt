@@ -1,0 +1,6 @@
+Your BC Tennis Ladder administrator account is ready.
+
+Set its password using this secure, one-time link:
+{{ protocol }}://{{ domain }}{% url 'ladder:password_reset_confirm' uidb64=uid token=token %}
+
+This link expires for your security. If you were not expecting this account, contact the deployment operator.

@@ -40,6 +40,10 @@ services:
         sync: false
       - key: DJANGO_DEFAULT_FROM_EMAIL
         sync: false
+      - key: DJANGO_BOOTSTRAP_ADMIN_USERNAME
+        sync: false
+      - key: DJANGO_BOOTSTRAP_ADMIN_EMAIL
+        sync: false
       - key: DJANGO_NOTIFICATION_DELIVERY_MODE
         value: scheduled
 

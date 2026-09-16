@@ -4,10 +4,18 @@ from datetime import datetime, timedelta, timezone as datetime_timezone
 from hashlib import sha256
 from itertools import combinations
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.core import signing
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Max, Q
+from django.template.loader import render_to_string
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from .models import (
     AdminNotification,
@@ -66,6 +74,62 @@ class AuthorizationFailure(DomainError):
 
 class BookingCollision(DomainError):
     pass
+
+
+class ProvisioningError(DomainError):
+    pass
+
+
+def provision_first_administrator(username, email):
+    """Create and notify the first superuser, or report an existing provision."""
+    user_model = get_user_model()
+    if user_model.objects.filter(is_superuser=True).exists():
+        return None
+    username = (username or "").strip()
+    email = (email or "").strip()
+    if not username or not email:
+        raise ProvisioningError("Bootstrap administrator username and email are required.")
+
+    try:
+        with transaction.atomic():
+            if user_model.objects.select_for_update().filter(is_superuser=True).exists():
+                return None
+            user = user_model(
+                username=username,
+                email=user_model.objects.normalize_email(email),
+                is_active=True,
+                is_staff=True,
+                is_superuser=True,
+            )
+            user.set_unusable_password()
+            user.full_clean()
+            user.save()
+
+            domain = settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else "localhost"
+            context = {
+                "domain": domain,
+                "protocol": "http" if settings.DEBUG else "https",
+                "uid": urlsafe_base64_encode(force_bytes(user.pk)),
+                "token": default_token_generator.make_token(user),
+            }
+            try:
+                sent = send_mail(
+                    "Set your BC Tennis Ladder administrator password",
+                    render_to_string("registration/bootstrap_admin_email.txt", context),
+                    None,
+                    [user.email],
+                )
+            except Exception as error:
+                raise ProvisioningError("Administrator email could not be sent; no account was created.") from error
+            if sent != 1:
+                raise ProvisioningError("Administrator email could not be sent; no account was created.")
+            return user
+    except ValidationError as error:
+        raise ProvisioningError("Bootstrap administrator settings are invalid.") from error
+    except IntegrityError as error:
+        if user_model.objects.filter(is_superuser=True).exists():
+            return None
+        raise ProvisioningError("Bootstrap administrator conflicts with an existing account.") from error
 
 
 def rate_limit_key(scope, value):

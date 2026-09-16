@@ -1,15 +1,21 @@
 import os
+import re
 import subprocess
 import sys
+import unittest
 from datetime import date, time, timedelta
 from io import StringIO
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.messages import get_messages
-from django.core.management import call_command
-from django.test import SimpleTestCase, TestCase
+from django.core import mail
+from django.core.management import call_command, CommandError
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
 
 from .forms import ScoreSubmissionForm
 from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, RateLimitEvent, Team
@@ -142,3 +148,59 @@ class BruteForceProtectionTests(TestCase):
         self.assertFalse(RateLimitEvent.objects.filter(pk=old.pk).exists())
         self.assertTrue(RateLimitEvent.objects.filter(pk=current.pk).exists())
         self.assertIn("Deleted 1", output.getvalue())
+
+
+@override_settings(ALLOWED_HOSTS=["ladder.example.com"])
+class BootstrapAdminCommandTests(TestCase):
+    def setUp(self):
+        self.environment = {
+            "DJANGO_BOOTSTRAP_ADMIN_USERNAME": "first-admin",
+            "DJANGO_BOOTSTRAP_ADMIN_EMAIL": "admin@example.com",
+        }
+
+    def test_command_creates_unusable_superuser_and_sends_valid_reset_link(self):
+        output = StringIO()
+
+        with unittest.mock.patch.dict(os.environ, self.environment, clear=False):
+            call_command("bootstrap_admin", stdout=output)
+
+        user = get_user_model().objects.get(username="first-admin")
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["admin@example.com"])
+        match = re.search(r"/accounts/reset/(?P<uid>[^/]+)/(?P<token>[^/]+)/", mail.outbox[0].body)
+        self.assertIsNotNone(match)
+        self.assertEqual(force_str(urlsafe_base64_decode(match.group("uid"))), str(user.pk))
+        self.assertTrue(default_token_generator.check_token(user, match.group("token")))
+        self.assertIn("Administrator provisioned", output.getvalue())
+
+    def test_command_is_idempotent_after_first_superuser(self):
+        with unittest.mock.patch.dict(os.environ, self.environment, clear=False):
+            call_command("bootstrap_admin", stdout=StringIO())
+            mail.outbox.clear()
+            output = StringIO()
+            call_command("bootstrap_admin", stdout=output)
+
+        self.assertEqual(get_user_model().objects.filter(is_superuser=True).count(), 1)
+        self.assertEqual(mail.outbox, [])
+        self.assertIn("already provisioned", output.getvalue())
+
+    def test_command_requires_environment_when_no_superuser_exists(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DJANGO_BOOTSTRAP_ADMIN_USERNAME", None)
+            os.environ.pop("DJANGO_BOOTSTRAP_ADMIN_EMAIL", None)
+            with self.assertRaisesMessage(CommandError, "username and email are required"):
+                call_command("bootstrap_admin")
+
+    def test_email_failure_rolls_back_new_administrator(self):
+        with (
+            unittest.mock.patch.dict(os.environ, self.environment, clear=False),
+            unittest.mock.patch("ladder.services.send_mail", side_effect=OSError("SMTP unavailable")),
+            self.assertRaisesMessage(CommandError, "email could not be sent"),
+        ):
+            call_command("bootstrap_admin")
+
+        self.assertFalse(get_user_model().objects.filter(is_superuser=True).exists())

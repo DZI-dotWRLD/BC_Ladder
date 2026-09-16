@@ -24,6 +24,8 @@ DJANGO_EMAIL_HOST_USER=<gmail-sender-address>
 DJANGO_EMAIL_HOST_PASSWORD=<gmail-app-password>
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL=BC Tennis Ladder <gmail-sender-address>
+DJANGO_BOOTSTRAP_ADMIN_USERNAME=<initial-admin-username>
+DJANGO_BOOTSTRAP_ADMIN_EMAIL=<initial-admin-email>
 DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
 ```
 
@@ -44,6 +46,14 @@ in source control. The example uses STARTTLS on port 587; for implicit TLS on
 port 465, set `DJANGO_EMAIL_USE_TLS=false` and `DJANGO_EMAIL_USE_SSL=true`.
 Verify the sender in your email provider before launch. Accounts created before
 email capture was added need an administrator to set a unique email address.
+
+`DJANGO_BOOTSTRAP_ADMIN_USERNAME` and `DJANGO_BOOTSTRAP_ADMIN_EMAIL` provision
+the first superuser during the release build. The account starts with an
+unusable password and receives a one-time password-reset link over the configured
+email backend. `bootstrap_admin` is idempotent: after any superuser exists it
+exits successfully with `Administrator already provisioned.` and sends no email.
+Keep both values in the hosting provider's secret environment settings. A failed
+initial email rolls back account creation so the next release can retry.
 
 For Gmail SMTP, enable 2-Step Verification on the sender account and create an
 app password. Store it only in the hosting provider's secret environment
@@ -153,6 +163,7 @@ Recommended first deploy sequence:
 
    ```bash
    python manage.py migrate
+   python manage.py bootstrap_admin
    python manage.py audit_data_integrity
    ```
 
