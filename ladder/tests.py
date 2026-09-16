@@ -2190,7 +2190,7 @@ class PhaseA5OperationsTests(TestCase):
         first_output = StringIO()
         second_output = StringIO()
 
-        call_command("seed_demo", stdout=first_output)
+        call_command("seed_demo", allow_non_debug=True, stdout=first_output)
         counts_after_first = {
             "users": get_user_model().objects.count(),
             "profiles": PlayerProfile.objects.count(),
@@ -2199,7 +2199,7 @@ class PhaseA5OperationsTests(TestCase):
             "standings": LadderStanding.objects.count(),
             "matches": Match.objects.count(),
         }
-        call_command("seed_demo", stdout=second_output)
+        call_command("seed_demo", allow_non_debug=True, stdout=second_output)
 
         self.assertEqual(counts_after_first["users"], get_user_model().objects.count())
         self.assertEqual(counts_after_first["profiles"], PlayerProfile.objects.count())
@@ -2218,6 +2218,13 @@ class PhaseA5OperationsTests(TestCase):
         ends_at = starts_at + timedelta(days=30)
         self.assertTrue(find_opponent_suggestions(demo_mens_team, (starts_at, ends_at)))
         self.assertIn("Demo data is ready", second_output.getvalue())
+
+    @override_settings(DEBUG=False)
+    def test_seed_demo_refuses_non_debug_without_override(self):
+        with self.assertRaisesRegex(CommandError, "disabled when DEBUG is false"):
+            call_command("seed_demo")
+
+        self.assertFalse(get_user_model().objects.filter(username__startswith="demo-").exists())
 
 
 class DataIntegrityAuditCommandTests(TestCase):
