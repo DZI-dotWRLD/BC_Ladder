@@ -150,6 +150,7 @@ DJANGO_DEFAULT_FROM_EMAIL
 DJANGO_BOOTSTRAP_ADMIN_USERNAME
 DJANGO_BOOTSTRAP_ADMIN_EMAIL
 DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
+SENTRY_DSN
 ```
 
 Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
@@ -182,6 +183,9 @@ default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
 Notification outbox delivery defaults to `inline` with DEBUG or during tests
 and to `scheduled` otherwise. A production scheduler must run
 `python manage.py send_notification_emails --retry-failed` every minute.
+Error tracking is disabled when `SENTRY_DSN` is unset. When configured, Sentry
+uses its Django integration with default PII collection disabled and filters
+email, password, authorization, and cookie fields before sending events.
 
 ## Current Limitations
 

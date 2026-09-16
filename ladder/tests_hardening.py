@@ -19,6 +19,8 @@ from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 
+from config.sentry import FILTERED_VALUE, initialize_sentry, scrub_sentry_event
+
 from .forms import ScoreSubmissionForm
 from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, RateLimitEvent, Team
 from .services import InvalidInput, validate_match_score
@@ -239,3 +241,42 @@ class OperationsScheduleConfigurationTests(SimpleTestCase):
             with self.subTest(command=command):
                 self.assertIn(schedule, blueprint)
                 self.assertIn(command, blueprint)
+
+
+class SentryConfigurationTests(SimpleTestCase):
+    def test_unset_dsn_does_not_initialize_sdk(self):
+        with unittest.mock.patch("sentry_sdk.init") as init:
+            enabled = initialize_sentry("")
+
+        self.assertFalse(enabled)
+        init.assert_not_called()
+
+    def test_configured_dsn_disables_default_pii_and_installs_scrubber(self):
+        with unittest.mock.patch("sentry_sdk.init") as init:
+            enabled = initialize_sentry("https://public@example.invalid/1")
+
+        self.assertTrue(enabled)
+        options = init.call_args.kwargs
+        self.assertFalse(options["send_default_pii"])
+        self.assertIs(options["before_send"], scrub_sentry_event)
+        self.assertEqual(options["dsn"], "https://public@example.invalid/1")
+        self.assertEqual(options["integrations"][0].__class__.__name__, "DjangoIntegration")
+
+    def test_scrubber_filters_identity_and_credential_fields_recursively(self):
+        event = {
+            "request": {
+                "headers": {"Authorization": "Bearer secret", "Cookie": "session=secret", "Accept": "text/html"},
+                "data": {"email": "player@example.com", "new_password": "secret", "team_id": 9},
+            },
+            "extra": [{"recipient_email": "other@example.com"}],
+        }
+
+        scrubbed = scrub_sentry_event(event)
+
+        self.assertEqual(scrubbed["request"]["headers"]["Authorization"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["headers"]["Cookie"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["data"]["email"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["data"]["new_password"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["extra"][0]["recipient_email"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["headers"]["Accept"], "text/html")
+        self.assertEqual(scrubbed["request"]["data"]["team_id"], 9)

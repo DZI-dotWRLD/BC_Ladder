@@ -18,6 +18,8 @@ from pathlib import Path
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
+from .sentry import initialize_sentry
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -271,6 +273,9 @@ LOGGING = {
         },
     },
 }
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+SENTRY_ENABLED = initialize_sentry(SENTRY_DSN)
 
 
 def validate_production_settings():

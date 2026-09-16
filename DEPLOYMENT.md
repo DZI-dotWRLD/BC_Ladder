@@ -40,6 +40,14 @@ PostgreSQL's default port.
 set, every entry must be an explicit HTTPS origin. Do not use local development
 origins or wildcards in production.
 
+`SENTRY_DSN` is optional. When unset, the Sentry SDK is not initialized and
+application behavior is unchanged. When set, Django error tracking is enabled
+with `send_default_pii=False`; email, password, authorization, and cookie fields
+are filtered again by the application's `before_send` hook. Store the DSN in the
+hosting provider's secret settings. On an existing Render Blueprint, add it
+manually to the web and cron services because newly added `sync: false`
+variables are ignored during updates.
+
 Password recovery requires a working SMTP account in every deployed
 environment. Keep its credentials in the hosting provider's secret store, not
 in source control. The example uses STARTTLS on port 587; for implicit TLS on

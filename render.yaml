@@ -44,6 +44,8 @@ services:
         sync: false
       - key: DJANGO_BOOTSTRAP_ADMIN_EMAIL
         sync: false
+      - key: SENTRY_DSN
+        sync: false
       - key: DJANGO_NOTIFICATION_DELIVERY_MODE
         value: scheduled
 
@@ -69,6 +71,8 @@ services:
           property: connectionString
       - key: DJANGO_SECURE_SSL_REDIRECT
         value: "true"
+      - key: SENTRY_DSN
+        sync: false
       - key: DJANGO_EMAIL_BACKEND
         value: django.core.mail.backends.smtp.EmailBackend
       - key: DJANGO_EMAIL_HOST
@@ -108,6 +112,8 @@ services:
           property: connectionString
       - key: DJANGO_SECURE_SSL_REDIRECT
         value: "true"
+      - key: SENTRY_DSN
+        sync: false
 
   - type: cron
     name: bc-ladder-integrity-audit
@@ -131,6 +137,8 @@ services:
           property: connectionString
       - key: DJANGO_SECURE_SSL_REDIRECT
         value: "true"
+      - key: SENTRY_DSN
+        sync: false
 
   - type: cron
     name: bc-ladder-rate-limit-purge
@@ -154,6 +162,8 @@ services:
           property: connectionString
       - key: DJANGO_SECURE_SSL_REDIRECT
         value: "true"
+      - key: SENTRY_DSN
+        sync: false
 
 databases:
   - name: bc-ladder-db
