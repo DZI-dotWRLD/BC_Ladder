@@ -72,6 +72,7 @@ instead of creating duplicates.
 .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
 .\venv\Scripts\python.exe manage.py reconcile_standings
 .\venv\Scripts\python.exe manage.py audit_data_integrity
+.\venv\Scripts\python.exe manage.py create_invite_codes --count 5
 git diff --check
 ```
 
@@ -177,7 +178,8 @@ default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
 - SQLite is supported for local development. PostgreSQL is configured in CI for
   production-style transaction, range-overlap constraints, and concurrency
   verification.
-- Players may self-register. Selected lineup players, not unrelated teammates,
+- Players register with an administrator-issued invite code and activate their
+  account through a one-time email-verification link. Selected lineup players, not unrelated teammates,
   accept suggestions and submit scores.
 - Suggestions expire at the proposed match start time.
 - Equal-points ladder ordering is points, wins, fewer losses, then team name/id.

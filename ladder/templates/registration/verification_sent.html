@@ -1,0 +1,18 @@
+{% extends "ladder/base.html" %}
+
+{% block title %}Verify your email | BC Ladder{% endblock %}
+
+{% block content %}
+<section class="panel">
+    <h1>Check your email</h1>
+    <p>Use the secure, one-time verification link to activate your account.</p>
+    <p class="muted">If the message does not arrive, check your spam folder or request another link.</p>
+    <form method="post" action="{% url 'ladder:resend_verification' %}">
+        {% csrf_token %}
+        {{ form.email.label_tag }}
+        {{ form.email }}
+        <button type="submit">Resend verification</button>
+    </form>
+    <p><a href="{% url 'ladder:login' %}">Return to login</a></p>
+</section>
+{% endblock %}

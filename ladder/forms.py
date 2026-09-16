@@ -66,6 +66,7 @@ class ProfileSetupForm(forms.ModelForm):
 
 
 class PlayerRegistrationForm(UserCreationForm):
+    invite_code = forms.CharField(max_length=128, strip=True)
     email = forms.EmailField(
         help_text="Used for account recovery, match requests, and important ladder notifications.",
         widget=forms.EmailInput(attrs={"autocomplete": "email"}),
@@ -74,13 +75,20 @@ class PlayerRegistrationForm(UserCreationForm):
 
     class Meta:
         model = get_user_model()
-        fields = ("username", "email", "gender", "password1", "password2")
+        fields = ("username", "email", "invite_code", "gender", "password1", "password2")
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()
         if users_with_email(email).exists():
             raise forms.ValidationError(EMAIL_CONFLICT)
         return email
+
+
+class VerificationResendForm(forms.Form):
+    email = forms.EmailField(widget=forms.EmailInput(attrs={"autocomplete": "email"}))
+
+    def clean_email(self):
+        return self.cleaned_data["email"].strip().lower()
 
 
 class ScoreSubmissionForm(forms.Form):

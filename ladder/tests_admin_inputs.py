@@ -59,6 +59,23 @@ class AdminInputBoundaryTests(TestCase):
         self.assertIn("team", admin.site._registry[models.PlayerProfile].get_readonly_fields(self.request))
         self.assertEqual(admin.site._registry[models.Team].inlines, ())
 
+    def test_staff_can_create_and_revoke_invites_but_not_edit_usage_or_delete(self):
+        model_admin = admin.site._registry[models.InviteCode]
+        invite = models.InviteCode.objects.create(code="admin-boundary", created_by=self.staff)
+        self.assertTrue(model_admin.has_add_permission(self.request))
+        self.assertTrue(model_admin.has_change_permission(self.request, invite))
+        self.assertFalse(model_admin.has_delete_permission(self.request, invite))
+        self.assertIn("uses", model_admin.get_readonly_fields(self.request, invite))
+
+        self.client.force_login(self.staff)
+        self.client.post(
+            reverse("admin:ladder_invitecode_changelist"),
+            {"action": "revoke_invite_codes", "_selected_action": [invite.pk]},
+        )
+
+        invite.refresh_from_db()
+        self.assertIsNotNone(invite.revoked_at)
+
     def test_view_only_staff_cannot_run_operational_actions(self):
         user = get_user_model().objects.create_user("view-only-admin", password="pass", is_staff=True)
         user.user_permissions.add(Permission.objects.get(codename="view_teammembership"))

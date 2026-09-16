@@ -18,6 +18,7 @@ from .forms import (
     SuggestionAcceptanceForm,
     TeamCreateForm,
     TeamJoinForm,
+    VerificationResendForm,
 )
 from .models import (
     AvailabilitySlot,
@@ -29,7 +30,14 @@ from .models import (
     Team,
     TeamMembership,
 )
-from .registration import RegistrationConflict, register_player
+from .registration import (
+    RegistrationConflict,
+    VerificationFailure,
+    activate_user_from_token,
+    register_player,
+    send_verification_email,
+    users_with_email,
+)
 from .services import (
     DomainError,
     accept_suggestion,
@@ -305,10 +313,35 @@ def register(request):
         except RegistrationConflict as exc:
             form.add_error(exc.field, str(exc))
         else:
-            login(request, user)
-            messages.success(request, "Account created.")
-            return redirect("ladder:dashboard")
+            send_verification_email(request, user)
+            return redirect("ladder:verification_sent")
     return render(request, "registration/register.html", {"form": form})
+
+
+def verification_sent(request):
+    return render(request, "registration/verification_sent.html", {"form": VerificationResendForm()})
+
+
+def resend_verification(request):
+    if request.method != "POST":
+        return redirect("ladder:verification_sent")
+    form = VerificationResendForm(request.POST)
+    if form.is_valid():
+        user = users_with_email(form.cleaned_data["email"]).filter(is_active=False).first()
+        if user is not None:
+            send_verification_email(request, user)
+    messages.success(request, "If that account still needs verification, a new link is on its way.")
+    return redirect("ladder:verification_sent")
+
+
+def verify_account(request, uidb64, token):
+    try:
+        user = activate_user_from_token(uidb64, token)
+    except VerificationFailure:
+        return render(request, "registration/verification_invalid.html", status=400)
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    messages.success(request, "Email verified. Your account is active.")
+    return redirect("ladder:dashboard")
 
 
 @login_required

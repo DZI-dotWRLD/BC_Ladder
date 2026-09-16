@@ -25,6 +25,7 @@ from .models import (
     Challenge,
     ConfirmedMatchResult,
     EmailNotificationDelivery,
+    InviteCode,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -1263,6 +1264,10 @@ class RemediationServiceTests(TestCase):
 class PhaseARequestTests(TestCase):
     club_tz = ZoneInfo("America/New_York")
 
+    def setUp(self):
+        inviter = get_user_model().objects.create_user(username="phase-a-invite-creator")
+        self.invite = InviteCode.objects.create(code="phase-a-invite", created_by=inviter, max_uses=10)
+
     def create_profile(self, username, gender=PlayerProfile.GENDER_MALE):
         user = get_user_model().objects.create_user(username=username, password="pass")
         return PlayerProfile.objects.create(user=user, gender=gender)
@@ -1313,12 +1318,14 @@ class PhaseARequestTests(TestCase):
 
         self.assertRedirects(response, reverse("ladder:dashboard"))
 
-    def test_self_registration_creates_user_profile_and_logs_in(self):
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_self_registration_creates_inactive_user_profile_and_sends_verification(self):
         response = self.client.post(
             reverse("ladder:register"),
             {
                 "username": "new-register",
                 "email": "New.Player@Example.com",
+                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -1326,10 +1333,12 @@ class PhaseARequestTests(TestCase):
         )
 
         user = get_user_model().objects.get(username="new-register")
-        self.assertRedirects(response, reverse("ladder:dashboard"))
+        self.assertRedirects(response, reverse("ladder:verification_sent"))
         self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
         self.assertEqual(user.email, "new.player@example.com")
-        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+        self.assertFalse(user.is_active)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        self.assertEqual(len(mail.outbox), 1)
 
     def test_self_registration_rejects_an_email_already_in_use(self):
         get_user_model().objects.create_user(username="existing", email="player@example.com", password="pass")
@@ -1339,6 +1348,7 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "duplicate-email",
                 "email": "PLAYER@example.com",
+                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -1355,6 +1365,7 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "no-email-register",
                 "email": "not-an-email",
+                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
