@@ -5,6 +5,7 @@ import sys
 import unittest
 from datetime import date, time, timedelta
 from io import StringIO
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
@@ -222,3 +223,19 @@ class ReadinessCheckTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"status": "degraded"})
         self.assertEqual(response["Cache-Control"], "no-store")
+
+
+class OperationsScheduleConfigurationTests(SimpleTestCase):
+    def test_render_blueprint_declares_required_cron_jobs(self):
+        blueprint = (Path(__file__).resolve().parent.parent / "render.yaml").read_text(encoding="utf-8")
+
+        self.assertEqual(blueprint.count("  - type: cron"), 4)
+        for schedule, command in (
+            ('schedule: "* * * * *"', "startCommand: python manage.py send_notification_emails --retry-failed"),
+            ('schedule: "*/5 * * * *"', "startCommand: python manage.py expire_suggestions"),
+            ('schedule: "0 2 * * *"', "startCommand: python manage.py audit_data_integrity"),
+            ('schedule: "30 2 * * *"', "startCommand: python manage.py purge_rate_limit_events"),
+        ):
+            with self.subTest(command=command):
+                self.assertIn(schedule, blueprint)
+                self.assertIn(command, blueprint)
