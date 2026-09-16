@@ -1726,8 +1726,8 @@ class PhaseARequestTests(TestCase):
     def test_current_suggestion_accept_button_only_shows_for_selected_lineup_players(self):
         team_a, team_a_players = self.create_team_with_members("suggestions-selected-a", 3)
         _team_b, team_b_players = self.create_team_with_members("suggestions-selected-b", 2)
-        starts_at = self.make_dt(2026, 8, 20, 18)
-        ends_at = self.make_dt(2026, 8, 20, 20)
+        starts_at = (timezone.now() + timedelta(days=7)).replace(hour=18, minute=0, second=0, microsecond=0)
+        ends_at = starts_at + timedelta(hours=2)
         for player in team_a_players[:2] + team_b_players:
             save_availability(player.user, starts_at, ends_at)
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]

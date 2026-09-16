@@ -1288,6 +1288,25 @@ def create_match_suggestion(option, expires_at=None, actor=None):
         return suggestion
 
 
+def expire_open_suggestions(now=None):
+    """Expire overdue open suggestions under row locks and return the count."""
+    now = now or timezone.now()
+    open_statuses = [MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED]
+    with transaction.atomic():
+        locked_ids = list(
+            MatchSuggestion.objects.select_for_update(of=("self",))
+            .filter(status__in=open_statuses, expires_at__lte=now)
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
+        if not locked_ids:
+            return 0
+        return MatchSuggestion.objects.filter(pk__in=locked_ids).update(
+            status=MatchSuggestion.STATUS_EXPIRED,
+            updated_at=now,
+        )
+
+
 def _players_for_suggestion(suggestion):
     participants = list(suggestion.participants.select_related("player", "team").order_by("side", "lineup_order", "player_id"))
     by_side = defaultdict(list)

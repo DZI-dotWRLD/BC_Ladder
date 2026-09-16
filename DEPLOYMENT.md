@@ -167,7 +167,8 @@ Recommended first deploy sequence:
    python manage.py audit_data_integrity
    ```
 
-6. Visit `https://<render-host>/health/` and confirm `{"status": "ok"}`.
+6. Visit `https://<render-host>/health/` and confirm `{"status": "ok"}`, then
+   visit `/health/ready/` and confirm `{"status": "ready"}`.
 7. Register a temporary player account through `/accounts/register/`.
 
 `DJANGO_ALLOWED_HOSTS` is optional for the first `.onrender.com` trial because
@@ -183,15 +184,22 @@ After deploy:
 
 ```text
 GET /health/ -> 200 {"status": "ok"}
+GET /health/ready/ -> 200 {"status": "ready"}
 GET /accounts/login/ -> 200
 GET /accounts/password-reset/ -> 200
 GET /ladders/mens/ as an authenticated user -> 200
 GET /ladders/womens/ as an authenticated user -> 200
 ```
 
-`/health/` is intentionally public and does not touch the database. It verifies
-that the Django process can route requests. Database health is covered by
-migrations, `audit_data_integrity`, and application smoke checks.
+Both health endpoints are intentionally public and return `Cache-Control:
+no-store`. `/health/` does not touch the database and verifies that the Django
+process can route requests. `/health/ready/` runs `SELECT 1`; it returns HTTP 503
+with `{"status": "degraded"}` when the database is unavailable.
+
+Run `python manage.py expire_suggestions` to durably mark overdue proposed and
+partially accepted suggestions as expired. The UI also treats overdue rows as
+closed before the sweep runs, so an overdue request never presents an Accept
+action.
 
 ## Static files
 

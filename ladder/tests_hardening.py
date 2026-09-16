@@ -11,6 +11,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.contrib.messages import get_messages
 from django.core import mail
 from django.core.management import call_command, CommandError
+from django.db import DatabaseError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -204,3 +205,20 @@ class BootstrapAdminCommandTests(TestCase):
             call_command("bootstrap_admin")
 
         self.assertFalse(get_user_model().objects.filter(is_superuser=True).exists())
+
+
+class ReadinessCheckTests(TestCase):
+    def test_readiness_is_public_queries_database_and_is_not_cached(self):
+        response = self.client.get("/health/ready/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_readiness_returns_degraded_when_database_query_fails(self):
+        with unittest.mock.patch("config.views.connection.cursor", side_effect=DatabaseError("database unavailable")):
+            response = self.client.get("/health/ready/")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "degraded"})
+        self.assertEqual(response["Cache-Control"], "no-store")

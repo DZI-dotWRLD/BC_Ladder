@@ -278,6 +278,7 @@ def _lineup_label(players):
 def _suggestion_cards(suggestions, profile, team):
     cards = []
     open_statuses = {MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED}
+    now = timezone.now()
     for suggestion in suggestions:
         participants = list(suggestion.participants.all())
         players_by_side = {
@@ -291,10 +292,13 @@ def _suggestion_cards(suggestions, profile, team):
         own_team_accepted = team.id in accepted_team_ids
         required_team_ids = {suggestion.team_a_id, suggestion.team_b_id}
         is_selected_player = profile.id in {participant.player_id for participant in participants}
-        is_open = suggestion.status in open_statuses
+        is_overdue = suggestion.status in open_statuses and suggestion.expires_at <= now
+        is_open = suggestion.status in open_statuses and not is_overdue
         can_accept = is_open and is_selected_player and not own_team_accepted
 
-        if suggestion.status == MatchSuggestion.STATUS_CONFIRMED:
+        if is_overdue:
+            state_note = "This suggestion expired."
+        elif suggestion.status == MatchSuggestion.STATUS_CONFIRMED:
             state_note = "Match confirmed."
         elif suggestion.status in {MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED, MatchSuggestion.STATUS_EXPIRED}:
             state_note = f"This suggestion is {suggestion.get_status_display().lower()}."
@@ -402,6 +406,7 @@ def dashboard(request):
     active_availability = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE)
     availability = active_availability.order_by("starts_at")[:5]
     suggestions_qs = MatchSuggestion.objects.none()
+    suggestion_count = 0
     matches_qs = _player_match_queryset(profile)
     next_match = (
         matches_qs.filter(
@@ -425,17 +430,24 @@ def dashboard(request):
     team_b_players = [participant for participant in match_participants if participant.side == "b"]
     standing = LadderStanding.objects.filter(team=team).first() if team else None
     if team:
-        suggestions_qs = (
-            MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
+        open_statuses = [MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED]
+        suggestions_base_qs = (
+            MatchSuggestion.objects.filter(
+                Q(team_a=team) | Q(team_b=team),
+                status__in=open_statuses,
+                expires_at__gt=timezone.now(),
+            )
             .select_related("team_a", "team_b")
             .prefetch_related("participants__player__user", "acceptances")
-            .order_by("starts_at")[:5]
+            .order_by("starts_at")
         )
+        suggestion_count = suggestions_base_qs.count()
+        suggestions_qs = suggestions_base_qs[:5]
     setup_steps = _setup_steps_for_profile(
         profile,
         team,
         active_availability.count(),
-        suggestions_qs.count(),
+        suggestion_count,
         matches_qs.count(),
     )
     needs_setup = any(not step["complete"] for step in setup_steps)
@@ -630,7 +642,11 @@ def suggestions(request):
             .prefetch_related("participants__player__user", "acceptances")
             .annotate(
                 open_priority=Case(
-                    When(status__in=[MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED], then=Value(0)),
+                    When(
+                        status__in=[MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED],
+                        expires_at__gt=starts_at,
+                        then=Value(0),
+                    ),
                     default=Value(1),
                     output_field=IntegerField(),
                 )
