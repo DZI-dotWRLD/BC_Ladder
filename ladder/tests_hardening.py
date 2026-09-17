@@ -7,6 +7,7 @@ from datetime import date, time, timedelta
 from io import StringIO
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.messages import get_messages
@@ -24,6 +25,45 @@ from config.sentry import FILTERED_VALUE, initialize_sentry, scrub_sentry_event
 from .forms import ScoreSubmissionForm
 from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, RateLimitEvent, Team
 from .services import InvalidInput, validate_match_score
+
+
+class HeaderAndSessionHardeningTests(TestCase):
+    def test_login_response_enforces_content_security_policy(self):
+        response = self.client.get(reverse("ladder:login"))
+
+        directives = set(response.headers["Content-Security-Policy"].split("; "))
+        self.assertEqual(
+            directives,
+            {
+                "default-src 'self'",
+                "img-src 'self' data:",
+                "style-src 'self'",
+                "script-src 'self'",
+                "form-action 'self'",
+                "frame-ancestors 'none'",
+            },
+        )
+
+    def test_session_and_csrf_cookie_policy_is_lax(self):
+        self.assertEqual(settings.SESSION_COOKIE_AGE, 14 * 24 * 60 * 60)
+        self.assertEqual(settings.SESSION_COOKIE_SAMESITE, "Lax")
+        self.assertEqual(settings.CSRF_COOKIE_SAMESITE, "Lax")
+
+    def test_session_cookie_age_reads_environment(self):
+        environment = os.environ.copy()
+        environment.update({"DJANGO_DEBUG": "true", "DJANGO_SESSION_COOKIE_AGE": "3600"})
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import config.settings as settings; print(settings.SESSION_COOKIE_AGE)"],
+            cwd=os.fspath(os.path.dirname(os.path.dirname(__file__))),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "3600")
 
 
 class FailClosedSettingsTests(SimpleTestCase):

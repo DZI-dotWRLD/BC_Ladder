@@ -14,6 +14,7 @@ DJANGO_ALLOWED_HOSTS=example.com,www.example.com
 DJANGO_CSRF_TRUSTED_ORIGINS=https://example.com,https://www.example.com
 DATABASE_URL=<postgres-url>
 DJANGO_SECURE_SSL_REDIRECT=true
+DJANGO_SESSION_COOKIE_AGE=1209600
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_LOG_LEVEL=INFO
@@ -39,6 +40,11 @@ PostgreSQL's default port.
 `DJANGO_CSRF_TRUSTED_ORIGINS` may be omitted for a same-origin deployment. If
 set, every entry must be an explicit HTTPS origin. Do not use local development
 origins or wildcards in production.
+
+`DJANGO_SESSION_COOKIE_AGE` is the session lifetime in seconds and defaults to
+14 days (`1209600`). Session and CSRF cookies use `SameSite=Lax`. The enforced
+Content Security Policy permits only same-origin scripts, styles, forms, and
+images (plus `data:` images), and prevents framing.
 
 `SENTRY_DSN` is optional. When unset, the Sentry SDK is not initialized and
 application behavior is unchanged. When set, Django error tracking is enabled
