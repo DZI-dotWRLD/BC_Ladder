@@ -183,20 +183,18 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         option_c = next(option for option in options if option["team_b"].id == team_c.id)
         suggestion_b = create_match_suggestion(option_b, expires_at=self.make_dt(2027, 9, 2, 18))
         suggestion_c = create_match_suggestion(option_c, expires_at=self.make_dt(2027, 9, 2, 18))
-        accept_suggestion(team_a_players[0].user, suggestion_b, suggestion_b.version)
-        accept_suggestion(team_a_players[0].user, suggestion_c, suggestion_c.version)
+        accept_suggestion(team_a_players[0].user, suggestion_b)
+        accept_suggestion(team_a_players[0].user, suggestion_c)
 
         results = self.run_concurrently(
             [
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_b_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion_b.pk),
-                    suggestion_b.version,
                 ),
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_c_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion_c.pk),
-                    suggestion_c.version,
                 ),
             ]
         )
