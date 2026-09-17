@@ -51,9 +51,7 @@ class ConfirmedExpiryRetryTests(TransactionTestCase):
                 self.players.append(player)
                 SuggestionParticipant.objects.create(suggestion=self.suggestion, team=team, player=player, side=side, lineup_order=order)
                 MatchParticipant.objects.create(match=self.match, team=team, player=player, side=side, lineup_order=order)
-            SuggestionAcceptance.objects.create(
-                suggestion=self.suggestion, team=team, accepted_by=player.user, accepted_version=self.suggestion.version
-            )
+            SuggestionAcceptance.objects.create(suggestion=self.suggestion, team=team, accepted_by=player.user)
 
     def assert_history_unchanged(self, status):
         self.suggestion.refresh_from_db()
@@ -71,7 +69,7 @@ class ConfirmedExpiryRetryTests(TransactionTestCase):
             self.match.status = status
             self.match.save(update_fields=["status"])
             for _ in range(2):
-                result = accept_suggestion(self.players[0].user, self.suggestion, self.suggestion.version)
+                result = accept_suggestion(self.players[0].user, self.suggestion)
                 self.assertEqual(result.pk, self.match.pk)
                 self.assert_history_unchanged(status)
 
@@ -80,30 +78,23 @@ class ConfirmedExpiryRetryTests(TransactionTestCase):
         for status in (Match.STATUS_SCHEDULED, Match.STATUS_CANCELLED):
             self.match.status = status
             self.match.save(update_fields=["status"])
-            response = self.client.post(
-                reverse("ladder:accept_suggestion", args=[self.suggestion.pk]), {"version": self.suggestion.version}
-            )
+            response = self.client.post(reverse("ladder:accept_suggestion", args=[self.suggestion.pk]), {})
             self.assertRedirects(response, reverse("ladder:match_detail", args=[self.match.pk]), fetch_redirect_response=False)
             self.assert_history_unchanged(status)
 
     def test_unauthorized_service_and_request_cannot_alter_confirmed(self):
         outsider = PlayerProfile.objects.create(user=get_user_model().objects.create_user(username="outsider"), gender="M")
         with self.assertRaises(AuthorizationFailure):
-            accept_suggestion(outsider.user, self.suggestion, self.suggestion.version)
+            accept_suggestion(outsider.user, self.suggestion)
         self.client.force_login(outsider.user)
-        response = self.client.post(reverse("ladder:accept_suggestion", args=[self.suggestion.pk]), {"version": self.suggestion.version})
+        response = self.client.post(reverse("ladder:accept_suggestion", args=[self.suggestion.pk]), {})
         self.assertEqual(response.status_code, 404)
-        self.assert_history_unchanged(Match.STATUS_SCHEDULED)
-
-    def test_stale_version_still_rejected_without_altering_confirmed(self):
-        with self.assertRaises(StaleState):
-            accept_suggestion(self.players[0].user, self.suggestion, self.suggestion.version + 1)
         self.assert_history_unchanged(Match.STATUS_SCHEDULED)
 
     def test_confirmed_without_existing_match_is_controlled_and_not_expired(self):
         self.match.delete()
         with self.assertRaises(StaleState):
-            accept_suggestion(self.players[0].user, self.suggestion, self.suggestion.version)
+            accept_suggestion(self.players[0].user, self.suggestion)
         self.suggestion.refresh_from_db()
         self.assertEqual(self.suggestion.status, MatchSuggestion.STATUS_CONFIRMED)
         self.assertEqual(SuggestionAcceptance.objects.count(), 2)

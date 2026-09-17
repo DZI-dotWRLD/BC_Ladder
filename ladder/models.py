@@ -386,7 +386,6 @@ class MatchSuggestion(models.Model):
     starts_at = models.DateTimeField()
     ends_at = models.DateTimeField()
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_PROPOSED)
-    version = models.PositiveIntegerField(default=1)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -436,7 +435,6 @@ class SuggestionAcceptance(models.Model):
     suggestion = models.ForeignKey(MatchSuggestion, on_delete=models.CASCADE, related_name="acceptances")
     team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="suggestion_acceptances")
     accepted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="suggestion_acceptances")
-    accepted_version = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -27,7 +27,7 @@
                         <article class="request-row"><div><h4>{{ suggestion.team_a.name }} vs {{ suggestion.team_b.name }}</h4><p>{{ suggestion.starts_at|date:"M j, Y g:i A" }} – {{ suggestion.ends_at|date:"g:i A T" }}</p><p class="request-state">{{ suggestion.get_status_display }} · {{ card.state_note }}</p>
                             <details class="quiet-disclosure"><summary>Selected players</summary><p>{{ card.team_a_lineup }}</p><p>{{ card.team_b_lineup }}</p></details>
                         </div>
-                        {% if card.can_accept %}<form method="post" action="{% url 'ladder:accept_suggestion' suggestion.id %}">{% csrf_token %}<input type="hidden" name="version" value="{{ suggestion.version }}"><button type="submit">Accept</button></form>
+                        {% if card.can_accept %}<form method="post" action="{% url 'ladder:accept_suggestion' suggestion.id %}">{% csrf_token %}<button type="submit">Accept</button></form>
                         {% elif not card.is_selected_player %}<p class="muted">Only the selected lineup players can accept this suggestion.</p>{% endif %}
                         </article>
                     {% endwith %}

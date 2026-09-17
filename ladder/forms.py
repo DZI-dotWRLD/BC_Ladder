@@ -6,10 +6,6 @@ from .models import PlayerProfile, Team
 from .registration import EMAIL_CONFLICT, users_with_email
 
 
-class SuggestionAcceptanceForm(forms.Form):
-    version = forms.IntegerField(min_value=1, max_value=2147483647)
-
-
 class CandidateCommandForm(forms.Form):
     candidate = forms.CharField(max_length=8192, widget=forms.HiddenInput)
 

@@ -16,7 +16,6 @@ from .forms import (
     PlayerRegistrationForm,
     ProfileSetupForm,
     ScoreSubmissionForm,
-    SuggestionAcceptanceForm,
     TeamCreateForm,
     TeamJoinForm,
     VerificationResendForm,
@@ -706,12 +705,8 @@ def accept_suggestion_view(request, suggestion_id):
     if profile is None:
         return redirect("ladder:profile_setup")
     suggestion = get_object_or_404(MatchSuggestion.objects.filter(participants__player=profile), pk=suggestion_id)
-    form = SuggestionAcceptanceForm(request.POST)
-    if not form.is_valid():
-        messages.error(request, "Enter a valid suggestion version and try again.")
-        return redirect("ladder:suggestions")
     try:
-        result = accept_suggestion(request.user, suggestion, form.cleaned_data["version"])
+        result = accept_suggestion(request.user, suggestion)
         if isinstance(result, Match):
             messages.success(request, "Match confirmed.")
             return redirect("ladder:match_detail", match_id=result.id)

@@ -48,12 +48,12 @@ class ExpiryPersistenceTests(TransactionTestCase):
     def test_expiry_survives_controlled_service_error_and_retry(self):
         for _ in range(2):
             with self.assertRaises(StaleState):
-                accept_suggestion(self.player.user, self.suggestion, self.suggestion.version)
+                accept_suggestion(self.player.user, self.suggestion)
             self.assert_expired_without_booking()
 
     def test_expiry_survives_request_error(self):
         self.client.force_login(self.player.user)
-        response = self.client.post(reverse("ladder:accept_suggestion", args=[self.suggestion.pk]), {"version": self.suggestion.version})
+        response = self.client.post(reverse("ladder:accept_suggestion", args=[self.suggestion.pk]), {})
         self.assertEqual(response.status_code, 302)
         self.assertIn("Suggestion has expired.", [str(message) for message in get_messages(response.wsgi_request)])
         self.assert_expired_without_booking()
@@ -61,19 +61,17 @@ class ExpiryPersistenceTests(TransactionTestCase):
     def test_unselected_actor_cannot_expire_suggestion(self):
         other = PlayerProfile.objects.create(user=get_user_model().objects.create_user(username="other"), gender="M")
         with self.assertRaises(AuthorizationFailure):
-            accept_suggestion(other.user, self.suggestion, self.suggestion.version)
+            accept_suggestion(other.user, self.suggestion)
         self.suggestion.refresh_from_db()
         self.assertEqual(self.suggestion.status, MatchSuggestion.STATUS_PROPOSED)
 
     def test_expiry_preserves_existing_acceptance_and_historical_times(self):
-        SuggestionAcceptance.objects.create(
-            suggestion=self.suggestion, team=self.team_a, accepted_by=self.player.user, accepted_version=self.suggestion.version
-        )
+        SuggestionAcceptance.objects.create(suggestion=self.suggestion, team=self.team_a, accepted_by=self.player.user)
         self.suggestion.status = MatchSuggestion.STATUS_PARTIALLY_ACCEPTED
         self.suggestion.save(update_fields=["status"])
         original_times = (self.suggestion.starts_at, self.suggestion.ends_at, self.suggestion.expires_at)
         with self.assertRaises(StaleState):
-            accept_suggestion(self.player.user, self.suggestion, self.suggestion.version)
+            accept_suggestion(self.player.user, self.suggestion)
         self.suggestion.refresh_from_db()
         self.assertEqual(self.suggestion.status, MatchSuggestion.STATUS_EXPIRED)
         self.assertEqual((self.suggestion.starts_at, self.suggestion.ends_at, self.suggestion.expires_at), original_times)

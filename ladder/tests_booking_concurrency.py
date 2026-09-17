@@ -69,7 +69,7 @@ class BookingFixtures:
 
     def partially_accepted(self):
         suggestion = self.proposed()
-        accept_suggestion(self.players_a[0].user, suggestion, suggestion.version)
+        accept_suggestion(self.players_a[0].user, suggestion)
         return suggestion
 
     def request_removal(self):
@@ -81,14 +81,14 @@ class BookingIntegrityTests(BookingFixtures, TestCase):
         suggestion = self.proposed()
         Team.objects.filter(pk=self.team_b.pk).update(status=Team.STATUS_RETIRED)
         with self.assertRaises(StaleState):
-            accept_suggestion(self.players_a[0].user, suggestion, suggestion.version)
+            accept_suggestion(self.players_a[0].user, suggestion)
         self.assertEqual(suggestion.acceptances.count(), 0)
 
     def test_inactive_membership_cannot_fall_back_to_legacy_profile_team(self):
         suggestion = self.partially_accepted()
         TeamMembership.objects.filter(player=self.players_a[0]).update(status=TeamMembership.STATUS_INACTIVE)
         with self.assertRaises(StaleState):
-            accept_suggestion(self.players_b[0].user, suggestion, suggestion.version)
+            accept_suggestion(self.players_b[0].user, suggestion)
         self.assertFalse(Match.objects.exists())
         self.assertFalse(MatchReservation.objects.exists())
         self.assertEqual(suggestion.acceptances.count(), 1)
@@ -97,7 +97,7 @@ class BookingIntegrityTests(BookingFixtures, TestCase):
         suggestion = self.partially_accepted()
         suggestion.participants.filter(side=SuggestionParticipant.SIDE_A).update(team=self.team_b)
         with self.assertRaises(InvalidInput):
-            accept_suggestion(self.players_b[0].user, suggestion, suggestion.version)
+            accept_suggestion(self.players_b[0].user, suggestion)
         self.assertFalse(Match.objects.exists())
 
     def test_trusted_option_creation_revalidates_team_and_source_window(self):
@@ -176,10 +176,10 @@ class BookingIntegrityTests(BookingFixtures, TestCase):
 
     def test_confirmation_and_post_removal_retries_preserve_four_historical_players(self):
         suggestion = self.partially_accepted()
-        match = accept_suggestion(self.players_b[0].user, suggestion, suggestion.version)
+        match = accept_suggestion(self.players_b[0].user, suggestion)
         removal = self.request_removal()
         resolve_membership_request(self.admin, removal, "approve")
-        self.assertEqual(accept_suggestion(self.players_a[0].user, suggestion, suggestion.version).pk, match.pk)
+        self.assertEqual(accept_suggestion(self.players_a[0].user, suggestion).pk, match.pk)
         self.assertEqual(set(match.reservations.values_list("player_id", flat=True)), {p.pk for p in self.players_a[:2] + self.players_b})
         self.assertEqual(match.participants.count(), 4)
         self.assertTrue(self.players_a[2].availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE).exists())
@@ -192,7 +192,7 @@ class BookingIntegrityTests(BookingFixtures, TestCase):
         suggestion = self.partially_accepted()
         resolve_membership_request(self.admin, self.request_removal(), "approve")
         self.client.force_login(self.players_b[0].user)
-        response = self.client.post(reverse("ladder:accept_suggestion", args=[suggestion.pk]), {"version": suggestion.version})
+        response = self.client.post(reverse("ladder:accept_suggestion", args=[suggestion.pk]), {})
         self.assertEqual(response.status_code, 302)
         self.assertFalse(Match.objects.exists())
         self.assertEqual(suggestion.acceptances.count(), 1)
@@ -212,7 +212,7 @@ class BookingIntegrityTests(BookingFixtures, TestCase):
 
         with patch("ladder.services.MatchReservation.objects.create", side_effect=fail_after_first_reservation):
             with self.assertRaisesRegex(RuntimeError, "simulated reservation write failure"):
-                accept_suggestion(self.players_b[0].user, suggestion, suggestion.version)
+                accept_suggestion(self.players_b[0].user, suggestion)
 
         suggestion.refresh_from_db()
         self.assertEqual(suggestion.status, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED)
@@ -296,11 +296,11 @@ class PostgreSQLBookingContentionTests(BookingFixtures, TransactionTestCase):
         )
         first = self.partially_accepted()
         second = create_match_suggestion(option_c)
-        accept_suggestion(self.players_a[0].user, second, second.version)
+        accept_suggestion(self.players_a[0].user, second)
         self.assertFalse(MatchReservation.objects.exists())
         results = self.ordered_contention(
-            lambda: accept_suggestion(self.players_b[0].user, first, first.version),
-            lambda: accept_suggestion(players_c[0].user, second, second.version),
+            lambda: accept_suggestion(self.players_b[0].user, first),
+            lambda: accept_suggestion(players_c[0].user, second),
             [p.pk for p in self.players_a[:2] + self.players_b],
         )
         self.assertEqual(results["winner"][0], "ok")
@@ -315,7 +315,7 @@ class PostgreSQLBookingContentionTests(BookingFixtures, TransactionTestCase):
         removal = self.request_removal()
         results = self.ordered_contention(
             lambda: resolve_membership_request(self.admin, removal, "approve"),
-            lambda: accept_suggestion(self.players_b[0].user, suggestion, suggestion.version),
+            lambda: accept_suggestion(self.players_b[0].user, suggestion),
             [self.players_a[0].pk],
         )
         self.assertEqual(results["winner"][0], "ok")
@@ -328,7 +328,7 @@ class PostgreSQLBookingContentionTests(BookingFixtures, TransactionTestCase):
         suggestion = self.partially_accepted()
         removal = self.request_removal()
         results = self.ordered_contention(
-            lambda: accept_suggestion(self.players_b[0].user, suggestion, suggestion.version),
+            lambda: accept_suggestion(self.players_b[0].user, suggestion),
             lambda: resolve_membership_request(self.admin, removal, "approve"),
             [p.pk for p in self.players_a[:2] + self.players_b],
         )
@@ -336,14 +336,14 @@ class PostgreSQLBookingContentionTests(BookingFixtures, TransactionTestCase):
         self.assertEqual(results["loser"][0], "ok")
         self.assertEqual(Match.objects.count(), 1)
         self.assertEqual(MatchReservation.objects.filter(status=MatchReservation.STATUS_ACTIVE).count(), 4)
-        self.assertEqual(accept_suggestion(self.players_a[0].user, suggestion, suggestion.version).pk, results["winner"][1].pk)
+        self.assertEqual(accept_suggestion(self.players_a[0].user, suggestion).pk, results["winner"][1].pk)
 
     def test_availability_cancellation_wins_before_confirmation(self):
         suggestion = self.partially_accepted()
         slot = self.option["availability"][self.players_a[0].pk]
         results = self.ordered_contention(
             lambda: cancel_availability(self.players_a[0].user, slot),
-            lambda: accept_suggestion(self.players_b[0].user, suggestion, suggestion.version),
+            lambda: accept_suggestion(self.players_b[0].user, suggestion),
             [self.players_a[0].pk],
         )
         self.assertEqual(results["winner"][0], "ok")

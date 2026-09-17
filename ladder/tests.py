@@ -1100,7 +1100,7 @@ class RemediationServiceTests(TestCase):
     def test_dual_acceptance_confirms_match_and_consumes_only_four_players(self):
         team_a, team_a_players = self.create_team_with_members("accept-a", 3)
         team_b, team_b_players = self.create_team_with_members("accept-b", 2)
-        starts_at = timezone.now() + timedelta(days=1)
+        starts_at = timezone.make_aware(datetime.combine(timezone.localdate() + timedelta(days=1), time(18, 0)))
         ends_at = starts_at + timedelta(hours=2)
         for player in team_a_players[:2] + team_b_players:
             save_availability(player.user, starts_at, ends_at)
@@ -1109,9 +1109,9 @@ class RemediationServiceTests(TestCase):
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
         suggestion = create_match_suggestion(option, expires_at=starts_at)
 
-        partial = accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
-        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
-        retry = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        partial = accept_suggestion(team_a_players[0].user, suggestion)
+        match = accept_suggestion(team_b_players[0].user, suggestion)
+        retry = accept_suggestion(team_b_players[0].user, suggestion)
 
         third_slot.refresh_from_db()
         self.assertEqual(partial.status, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED)
@@ -1123,7 +1123,7 @@ class RemediationServiceTests(TestCase):
     def test_non_lineup_teammate_cannot_accept_suggestion(self):
         team_a, team_a_players = self.create_team_with_members("accept-auth-a", 3)
         team_b, team_b_players = self.create_team_with_members("accept-auth-b", 2)
-        starts_at = timezone.now() + timedelta(days=1)
+        starts_at = timezone.make_aware(datetime.combine(timezone.localdate() + timedelta(days=1), time(18, 0)))
         ends_at = starts_at + timedelta(hours=2)
         for player in team_a_players + team_b_players:
             save_availability(player.user, starts_at, ends_at)
@@ -1132,7 +1132,7 @@ class RemediationServiceTests(TestCase):
         suggestion = create_match_suggestion(option, expires_at=starts_at)
 
         with self.assertRaises(AuthorizationFailure):
-            accept_suggestion(team_a_players[2].user, suggestion, suggestion.version)
+            accept_suggestion(team_a_players[2].user, suggestion)
 
     def test_duplicate_suggestion_returns_existing_active_suggestion(self):
         team_a, team_a_players = self.create_team_with_members("suggest-dup-a", 2)
@@ -1650,12 +1650,12 @@ class PhaseARequestTests(TestCase):
         suggestion = MatchSuggestion.objects.get()
         first_accept = self.client.post(
             reverse("ladder:accept_suggestion", args=[suggestion.id]),
-            {"version": suggestion.version},
+            {},
         )
         self.client.force_login(team_b_players[0].user)
         second_accept = self.client.post(
             reverse("ladder:accept_suggestion", args=[suggestion.id]),
-            {"version": suggestion.version},
+            {},
         )
 
         self.assertEqual(create_response.status_code, 302)
@@ -1978,9 +1978,9 @@ class PhaseA5OperationsTests(TestCase):
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
         suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 8, 10, 18))
 
-        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
-        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
-        repeated_match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        accept_suggestion(team_a_players[0].user, suggestion)
+        match = accept_suggestion(team_b_players[0].user, suggestion)
+        repeated_match = accept_suggestion(team_b_players[0].user, suggestion)
         participant_user_ids = {player.user_id for player in team_a_players + team_b_players}
 
         self.assertEqual(repeated_match.pk, match.pk)
@@ -2031,8 +2031,8 @@ class PhaseA5OperationsTests(TestCase):
             save_availability(player.user, starts_at, ends_at)
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
         suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 8, 10, 18))
-        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
-        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        accept_suggestion(team_a_players[0].user, suggestion)
+        match = accept_suggestion(team_b_players[0].user, suggestion)
 
         cancelled = cancel_match(admin_profile.user, match)
 
@@ -2061,8 +2061,8 @@ class PhaseA5OperationsTests(TestCase):
         selected_player_ids = {player.id for player in option["team_a_players"] + option["team_b_players"]}
         selected_player = next(player for player in team_a_players if player.id in selected_player_ids)
         non_lineup_teammate = next(player for player in team_a_players if player.id not in selected_player_ids)
-        accept_suggestion(option["team_a_players"][0].user, suggestion, suggestion.version)
-        match = accept_suggestion(option["team_b_players"][0].user, suggestion, suggestion.version)
+        accept_suggestion(option["team_a_players"][0].user, suggestion)
+        match = accept_suggestion(option["team_b_players"][0].user, suggestion)
 
         with self.assertRaises(AuthorizationFailure):
             cancel_match(non_lineup_teammate.user, match)
@@ -2108,8 +2108,8 @@ class PhaseA5OperationsTests(TestCase):
         original_slots = {player.id: save_availability(player.user, starts_at, ends_at) for player in team_a_players + team_b_players}
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
         suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 9, 6, 18))
-        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
-        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        accept_suggestion(team_a_players[0].user, suggestion)
+        match = accept_suggestion(team_b_players[0].user, suggestion)
         replacement_player = team_a_players[0]
         replacement = save_availability(
             replacement_player.user,

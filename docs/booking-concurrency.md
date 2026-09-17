@@ -46,10 +46,12 @@ exact source IDs/bounds, active availability, and reservation conflicts.
 ## Acceptance and historical outcomes
 
 Inside one transaction, acceptance acquires stable parents and the suggestion,
-checks the current version, selected-player authorization, current active teams,
-exact side-to-team mapping, two players per side/four distinct players, persisted
-active membership, and existing player/ladder eligibility. Every acceptance must
-refer to the same suggestion version. Second-team acceptance locks compatible
+checks selected-player authorization, current active teams, exact side-to-team
+mapping, two players per side/four distinct players, persisted active membership,
+and existing player/ladder eligibility. Suggestions have no participant or
+interval mutation service, so the unused optimistic version and client version
+input were removed; participant identity is re-read under the locked suggestion
+transaction instead. Second-team acceptance locks compatible
 availability and reservation rows, rechecks eligibility/conflicts, and creates
 one match, four immutable participants, four reservations, consumes only those
 four source windows, and appends one event. Conflict or stale failures roll back

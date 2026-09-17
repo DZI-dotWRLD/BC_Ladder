@@ -1323,8 +1323,8 @@ def _players_for_suggestion(suggestion):
     return by_side
 
 
-def accept_suggestion(actor, suggestion, expected_version):
-    result = _accept_suggestion_transaction(actor, suggestion, expected_version)
+def accept_suggestion(actor, suggestion):
+    result = _accept_suggestion_transaction(actor, suggestion)
     # Expiry is a durable lifecycle transition, not a failed booking write.
     # Raise only after its transaction has committed; other errors still roll back.
     if isinstance(result, StaleState):
@@ -1332,7 +1332,7 @@ def accept_suggestion(actor, suggestion, expected_version):
     return result
 
 
-def _accept_suggestion_transaction(actor, suggestion, expected_version):
+def _accept_suggestion_transaction(actor, suggestion):
     actor_profile = _profile_for_user(actor)
     with transaction.atomic():
         reference = MatchSuggestion.objects.get(pk=suggestion.pk)
@@ -1343,8 +1343,6 @@ def _accept_suggestion_transaction(actor, suggestion, expected_version):
         if (locked.team_a_id, locked.team_b_id) != (reference.team_a_id, reference.team_b_id):
             raise StaleState("Suggestion teams changed while accepting.")
         locked.team_a, locked.team_b = teams[locked.team_a_id], teams[locked.team_b_id]
-        if locked.version != expected_version:
-            raise StaleState("Suggestion version is stale.")
         actor_team = _suggestion_side_for_player(locked, actor_profile)
         if actor_team is None or actor_team not in {locked.team_a, locked.team_b}:
             raise AuthorizationFailure("Only selected lineup players may accept this suggestion.")
@@ -1373,14 +1371,10 @@ def _accept_suggestion_transaction(actor, suggestion, expected_version):
         acceptance, _ = SuggestionAcceptance.objects.get_or_create(
             suggestion=locked,
             team=actor_team,
-            defaults={"accepted_by": actor, "accepted_version": expected_version},
+            defaults={"accepted_by": actor},
         )
-        if acceptance.accepted_version != expected_version:
-            raise StaleState("Existing acceptance is for a stale suggestion version.")
 
         acceptances = list(locked.acceptances.select_for_update(of=("self",)).order_by("pk"))
-        if any(row.accepted_version != expected_version for row in acceptances):
-            raise StaleState("Existing acceptance is for a stale suggestion version.")
         accepted_team_ids = {row.team_id for row in acceptances}
         required_team_ids = {locked.team_a_id, locked.team_b_id}
         if accepted_team_ids != required_team_ids:

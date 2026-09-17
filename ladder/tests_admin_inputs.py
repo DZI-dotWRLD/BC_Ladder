@@ -135,21 +135,11 @@ class AdminInputBoundaryTests(TestCase):
         suggestion = create_match_suggestion(find_opponent_suggestions(teams[0], (start, end))[0], actor=players[0].user)
         return suggestion, players
 
-    def test_malformed_versions_are_controlled_and_do_not_write(self):
-        suggestion, players = self.make_suggestion()
-        self.client.force_login(players[0].user)
-        for value in ("abc", "", "1.5", "-1", "0", "9" * 5000, None):
-            with self.subTest(version=value):
-                data = {} if value is None else {"version": value}
-                response = self.client.post(reverse("ladder:accept_suggestion", args=[suggestion.pk]), data)
-                self.assertEqual(response.status_code, 302)
-                self.assertEqual(suggestion.acceptances.count(), 0)
-
     def test_unrelated_acceptance_and_availability_have_scoped_lookup(self):
         suggestion, players = self.make_suggestion()
         self.client.force_login(self.staff)
         models.PlayerProfile.objects.create(user=self.staff, gender=models.PlayerProfile.GENDER_MALE)
-        response = self.client.post(reverse("ladder:accept_suggestion", args=[suggestion.pk]), {"version": suggestion.version})
+        response = self.client.post(reverse("ladder:accept_suggestion", args=[suggestion.pk]), {})
         self.assertEqual(response.status_code, 404)
         slot = players[0].availability_slots.first()
         response = self.client.post(reverse("ladder:cancel_availability", args=[slot.pk]))

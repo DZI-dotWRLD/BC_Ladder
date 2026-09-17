@@ -226,8 +226,8 @@ class Command(BaseCommand):
         suggestion = create_match_suggestion(options[0])
         team_a_user = options[0]["team_a_players"][0].user
         team_b_user = options[0]["team_b_players"][0].user
-        accept_suggestion(team_a_user, suggestion, suggestion.version)
-        return accept_suggestion(team_b_user, suggestion, suggestion.version)
+        accept_suggestion(team_a_user, suggestion)
+        return accept_suggestion(team_b_user, suggestion)
 
     def _completed_match(self, team_a, team_b, team_a_players, team_b_players):
         starts_at, ends_at = self._window(days_from_now=3, hour=17)
