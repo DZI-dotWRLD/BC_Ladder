@@ -5,6 +5,9 @@ supports player profiles, men's and women's teams, availability, opponent
 suggestions, dual-team match acceptance, score submission, standings, and admin
 operations.
 
+See [Architecture](docs/architecture.md) for the domain model, state machines,
+service boundaries, concurrency protocol, operations, and configuration map.
+
 ## Local Setup
 
 From PowerShell:

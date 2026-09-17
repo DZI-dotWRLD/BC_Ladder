@@ -1,3 +1,5 @@
+"""Transactional domain services for ladder membership, booking, and scoring."""
+
 from bisect import bisect_left
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
@@ -313,6 +315,7 @@ def _get_locked_standings_for_teams(*teams):
 
 
 def recalculate_ladder_positions(division):
+    """Reorder one division using the configured points and tie-break policy."""
     with transaction.atomic():
         _lock_standings_divisions([division])
         standings = list(
@@ -339,6 +342,7 @@ def recalculate_ladder_positions(division):
 
 
 def reconcile_ladder_standings(division=None):
+    """Rebuild persisted standings from confirmed historical match results."""
     with transaction.atomic():
         # Take the source snapshot after the gate, so a waiting reconciliation
         # cannot overwrite a result that committed while it was waiting.
@@ -374,6 +378,7 @@ def reconcile_ladder_standings(division=None):
 
 
 def request_membership_change(actor, player, target_team=None, action="join"):
+    """Create a join or removal request after enforcing actor and roster rules."""
     if not getattr(actor, "is_authenticated", False):
         raise AuthorizationFailure("Authentication is required.")
     if not actor.is_staff and getattr(player, "user_id", None) != actor.id:
@@ -454,6 +459,7 @@ def request_membership_change(actor, player, target_team=None, action="join"):
 
 
 def create_team_for_player(actor, player, team_name):
+    """Create a team and its first active membership for an authorized player."""
     if not getattr(actor, "is_authenticated", False):
         raise AuthorizationFailure("Authentication is required.")
     if not actor.is_staff and getattr(player, "user_id", None) != actor.id:
@@ -494,6 +500,7 @@ def create_team_for_player(actor, player, team_name):
 
 
 def cancel_join_request(actor, player):
+    """Cancel the player's oldest pending team join request idempotently."""
     if not getattr(actor, "is_authenticated", False):
         raise AuthorizationFailure("Authentication is required.")
     if not actor.is_staff and getattr(player, "user_id", None) != actor.id:
@@ -572,6 +579,7 @@ def anonymize_user_account(user):
 
 
 def resolve_membership_request(admin_actor, membership, decision):
+    """Approve or reject a pending membership request as an administrator."""
     if not getattr(admin_actor, "is_staff", False):
         raise AuthorizationFailure("Only administrators may resolve membership requests.")
     if decision not in {"approve", "reject"}:
@@ -659,6 +667,7 @@ def resolve_membership_request(admin_actor, membership, decision):
 
 
 def cancel_match(actor, match):
+    """Cancel an unscored match and safely release its participant reservations."""
     if not getattr(actor, "is_authenticated", False):
         raise AuthorizationFailure("Authentication is required.")
     with transaction.atomic():
@@ -748,6 +757,7 @@ def cancel_match(actor, match):
 
 
 def resolve_score_conflict(admin_actor, notification, official_submission=None, note=""):
+    """Select an official conflicting submission and repair standings atomically."""
     if not getattr(admin_actor, "is_staff", False):
         raise AuthorizationFailure("Only administrators may resolve score conflicts.")
     if official_submission is None:
@@ -815,6 +825,7 @@ def resolve_score_conflict(admin_actor, notification, official_submission=None, 
 
 
 def save_availability(actor, starts_at, ends_at):
+    """Create an authorized non-overlapping availability interval."""
     player = _profile_for_user(actor)
     starts_at = _make_aware(starts_at)
     ends_at = _make_aware(ends_at)
@@ -860,6 +871,7 @@ def save_availability(actor, starts_at, ends_at):
 
 
 def cancel_availability(actor, availability):
+    """Cancel the actor's unreserved active availability interval."""
     player = _profile_for_user(actor)
     with transaction.atomic():
         _lock_player_profiles([player.pk])
@@ -915,6 +927,7 @@ def _intersect_sorted_slots(slots_a, slots_b):
 
 
 def generate_team_lineups(team, interval=None):
+    """Return deterministic two-player lineup intervals for an active team."""
     lineups = []
     for player_one, player_two in get_player_pairs(team):
         slots_one = _active_intervals_for_player(player_one, interval)
@@ -1001,12 +1014,14 @@ def candidate_identity(option):
 
 
 def sign_candidate(option, actor):
+    """Sign an exact matchmaking candidate for a short-lived actor-bound POST."""
     return signing.dumps(
         {"actor": actor.pk, "candidate": candidate_identity(option)}, salt="ladder.matchmaking.candidate.v1", compress=True
     )
 
 
 def create_match_suggestion_from_candidate(token, actor, team):
+    """Validate a signed candidate against fresh eligibility and create it."""
     if not getattr(actor, "is_authenticated", False):
         raise AuthorizationFailure("Authentication is required.")
     try:
@@ -1032,6 +1047,7 @@ def create_match_suggestion_from_candidate(token, actor, team):
 
 
 def find_opponent_suggestions(team, interval):
+    """Find deterministic eligible opponent lineup options for a team interval."""
     if interval[0] >= interval[1]:
         raise InvalidInput("Search interval start must be before end.")
     teams, lineups, reservations = _matchmaking_snapshot(team, interval)
@@ -1165,6 +1181,7 @@ def _validate_option_sources_locked(option):
 
 
 def create_match_suggestion(option, expires_at=None, actor=None):
+    """Persist one validated suggestion and its immutable selected participants."""
     expires_at = expires_at or option["starts_at"]
     with transaction.atomic():
         option = _lock_option_parents(option, actor)
@@ -1276,6 +1293,7 @@ def _players_for_suggestion(suggestion):
 
 
 def accept_suggestion(actor, suggestion):
+    """Accept for a selected side and confirm the match when both sides agree."""
     result = _accept_suggestion_transaction(actor, suggestion)
     # Expiry is a durable lifecycle transition, not a failed booking write.
     # Raise only after its transaction has committed; other errors still roll back.
@@ -1439,6 +1457,7 @@ def _confirm_suggestion_locked(suggestion, actor):
 
 
 def validate_regular_set(team_a_games, team_b_games):
+    """Validate one regular set and return its winning side."""
     if not isinstance(team_a_games, int) or not isinstance(team_b_games, int):
         raise InvalidInput("Set scores must be integers.")
     if team_a_games < 0 or team_b_games < 0 or team_a_games == team_b_games:
@@ -1453,6 +1472,7 @@ def validate_regular_set(team_a_games, team_b_games):
 
 
 def validate_match_tiebreak(team_a_points, team_b_points):
+    """Validate the deciding match tie-break and return its winning side."""
     if not isinstance(team_a_points, int) or not isinstance(team_b_points, int):
         raise InvalidInput("Tie-break scores must be integers.")
     if team_a_points > 99 or team_b_points > 99:
@@ -1465,6 +1485,7 @@ def validate_match_tiebreak(team_a_points, team_b_points):
 
 
 def validate_match_score(sets):
+    """Validate and normalize a complete best-of-three match score."""
     normalized = []
     team_a_sets = 0
     team_b_sets = 0
@@ -1517,6 +1538,7 @@ def _extract_scores(item):
 
 
 def submit_match_result(actor, match, normalized_sets):
+    """Record one selected team's immutable score submission idempotently."""
     actor_profile = _profile_for_user(actor)
     score = validate_match_score(normalized_sets)
     with transaction.atomic():
@@ -1586,14 +1608,17 @@ def submit_match_result(actor, match, normalized_sets):
 
 
 def get_submissions(match: Match):
+    """Return submissions with the related teams and ordered set rows loaded."""
     return match.result_submissions.select_related("submitting_team").prefetch_related("sets")
 
 
 def submissions_match(submission_one, submission_two):
+    """Report whether two result submissions have the same score signature."""
     return _submission_score_signature(submission_one) == _submission_score_signature(submission_two)
 
 
 def get_match_status(match):
+    """Return the score workflow state derived from a match's submissions."""
     submissions = list(get_submissions(match).order_by("submitting_team_id"))
     if len(submissions) < 2:
         return "waiting_for_submissions"
@@ -1603,6 +1628,7 @@ def get_match_status(match):
 
 
 def create_admin_notification_for_conflict(match, actor=None):
+    """Create the unique unresolved score-conflict notification when required."""
     with transaction.atomic():
         locked_match = Match.objects.select_for_update().get(pk=match.pk)
         if get_match_status(locked_match) != "conflict":
@@ -1630,6 +1656,7 @@ def create_admin_notification_for_conflict(match, actor=None):
 
 
 def get_match_winner_and_loser(match):
+    """Return the winner and loser when both team submissions agree."""
     if get_match_status(match) != "confirmed":
         return []
     submission = list(get_submissions(match).order_by("submitting_team_id"))[0]
@@ -1716,6 +1743,7 @@ def _apply_official_result(match, submission, winner, loser, previous_result=Non
 
 
 def finalize_match_result(match):
+    """Confirm an agreed score and apply its standings and ledger effects once."""
     with transaction.atomic():
         locked_match = Match.objects.select_for_update(of=("self",)).select_related("team_a", "team_b").get(pk=match.pk)
         if hasattr(locked_match, "confirmed_result"):
