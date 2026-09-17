@@ -26,7 +26,6 @@ from ladder.services import (
     submit_match_result,
 )
 
-
 DEMO_PASSWORD = "DemoPass123!"
 
 

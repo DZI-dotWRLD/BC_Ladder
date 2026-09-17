@@ -47,12 +47,12 @@ from .services import (
     cancel_match,
     create_match_suggestion_from_candidate,
     create_team_for_player,
+    enforce_rate_limit,
     find_opponent_suggestions,
     generate_team_lineups,
     get_match_status,
-    request_membership_change,
-    enforce_rate_limit,
     rate_limit_key,
+    request_membership_change,
     save_availability,
     sign_candidate,
     submit_match_result,
@@ -74,7 +74,7 @@ class RateLimitedPasswordResetView(PasswordResetView):
 
 
 def _profile_for_request(request):
-    profile = PlayerProfile.objects.select_related("user", "team").filter(user=request.user).first()
+    profile = PlayerProfile.objects.select_related("user").filter(user=request.user).first()
     if profile is None:
         raise PlayerProfile.DoesNotExist
     return profile
@@ -94,7 +94,7 @@ def _active_membership(profile):
 
 def _active_team(profile):
     membership = _active_membership(profile)
-    return membership.team if membership else profile.team
+    return membership.team if membership else None
 
 
 def _message_domain_error(request, error):
@@ -207,9 +207,7 @@ def _setup_steps_for_profile(profile, team, active_availability_count, suggestio
 
 
 def _active_member_count(team):
-    membership_count = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count()
-    legacy_count = team.players.count()
-    return max(membership_count, legacy_count)
+    return TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count()
 
 
 def _suggestion_empty_state(profile, team, interval, options):
@@ -474,7 +472,7 @@ def team_detail(request):
     if profile is None:
         return redirect("ladder:profile_setup")
     membership = _active_membership(profile)
-    team = membership.team if membership else profile.team
+    team = membership.team if membership else None
     members = []
     member_count = 0
     team_capacity = 3
@@ -482,9 +480,7 @@ def team_detail(request):
     pending_join_request = None
     if team:
         member_ids = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).values_list("player_id", flat=True)
-        members = (
-            PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
-        )
+        members = PlayerProfile.objects.filter(id__in=member_ids).select_related("user").order_by("user__username")
         member_count = len(members)
         team_is_full = member_count >= team_capacity
     else:
@@ -672,8 +668,7 @@ def suggestions(request):
 
 
 @login_required
-def create_suggestion_view(request, option_index):
-    # Legacy URL argument is presentation-only; never reselect a ranked list index.
+def create_suggestion_view(request):
     if request.method != "POST":
         return redirect("ladder:suggestions")
     profile = _profile_or_setup(request)

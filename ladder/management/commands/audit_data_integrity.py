@@ -12,8 +12,7 @@ from ladder.models import (
     Team,
     TeamMembership,
 )
-from ladder.services import WIN_POINTS
-from ladder.services import DomainError, validate_match_score
+from ladder.services import WIN_POINTS, DomainError, validate_match_score
 
 
 class Command(BaseCommand):
@@ -98,7 +97,8 @@ def audit_memberships():
         findings.append(
             error(
                 "membership.wrong_division",
-                f"membership_id={membership.id} player_id={membership.player_id} team_id={membership.team_id} has incompatible gender/division.",
+                f"membership_id={membership.id} player_id={membership.player_id} "
+                f"team_id={membership.team_id} has incompatible gender/division.",
             )
         )
     return findings
@@ -221,7 +221,8 @@ def audit_confirmed_results():
             findings.append(
                 error(
                     "result.teams_mismatch",
-                    f"result_id={result.id} uses teams {sorted(result_team_ids)} but match_id={result.match_id} teams are {sorted(match_team_ids)}.",
+                    f"result_id={result.id} uses teams {sorted(result_team_ids)} but "
+                    f"match_id={result.match_id} teams are {sorted(match_team_ids)}.",
                 )
             )
         submission = result.confirmed_from_submission
@@ -237,7 +238,8 @@ def audit_confirmed_results():
             findings.append(
                 error(
                     "result.submission_team_mismatch",
-                    f"result_id={result.id} references submission_id={submission.id} from unrelated team_id={submission.submitting_team_id}.",
+                    f"result_id={result.id} references submission_id={submission.id} "
+                    f"from unrelated team_id={submission.submitting_team_id}.",
                 )
             )
         expected_winner_id = winner_id_from_submission(submission)
@@ -247,7 +249,8 @@ def audit_confirmed_results():
             findings.append(
                 error(
                     "result.winner_mismatch",
-                    f"result_id={result.id} winning_team_id={result.winning_team_id} but official score winner is team_id={expected_winner_id}.",
+                    f"result_id={result.id} winning_team_id={result.winning_team_id} "
+                    f"but official score winner is team_id={expected_winner_id}.",
                 )
             )
     return findings

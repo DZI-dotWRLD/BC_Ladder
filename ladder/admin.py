@@ -1,13 +1,9 @@
-from django.contrib import admin
-from django.contrib import messages
+from django.contrib import admin, messages
 from django.utils import timezone
-
-from .services import DomainError, cancel_match, resolve_membership_request, resolve_score_conflict
 
 from .models import (
     AdminNotification,
     AvailabilitySlot,
-    Challenge,
     ConfirmedMatchResult,
     EmailNotificationDelivery,
     InviteCode,
@@ -28,6 +24,7 @@ from .models import (
     WorkflowEvent,
     WorkflowEventRecipient,
 )
+from .services import DomainError, cancel_match, resolve_membership_request, resolve_score_conflict
 
 
 class InviteCodeAdmin(admin.ModelAdmin):
@@ -95,9 +92,8 @@ class TeamAdmin(admin.ModelAdmin):
 
 
 class PlayerProfileAdmin(admin.ModelAdmin):
-    readonly_fields = ("team",)
-    list_display = ("user", "gender", "team", "created_at")
-    list_select_related = ("user", "team")
+    list_display = ("user", "gender", "created_at")
+    list_select_related = ("user",)
 
     def get_readonly_fields(self, request, obj=None):
         readonly = list(super().get_readonly_fields(request, obj))
@@ -205,21 +201,6 @@ class AvailabilitySlotAdmin(WorkflowOwnedAdmin):
     list_filter = ("status", "week_start_date", "day_of_week")
     list_select_related = ("player__user",)
     ordering = ("starts_at", "week_start_date", "day_of_week", "start_time")
-
-
-class ChallengeAdmin(WorkflowOwnedAdmin):
-    list_display = (
-        "challenger_team",
-        "opponent_team",
-        "proposed_week_start_date",
-        "proposed_day_of_week",
-        "proposed_start_time",
-        "proposed_end_time",
-        "status",
-    )
-    filter_horizontal = ("challenger_players", "opponent_players")
-    list_filter = ("status", "proposed_week_start_date", "proposed_day_of_week")
-    ordering = ("proposed_week_start_date", "proposed_day_of_week", "proposed_start_time")
 
 
 class MatchAdmin(WorkflowOwnedAdmin):
@@ -497,7 +478,6 @@ admin.site.register(Team, TeamAdmin)
 admin.site.register(TeamMembership, TeamMembershipAdmin)
 admin.site.register(LadderStanding, LadderStandingAdmin)
 admin.site.register(AvailabilitySlot, AvailabilitySlotAdmin)
-admin.site.register(Challenge, ChallengeAdmin)
 admin.site.register(MatchSuggestion, MatchSuggestionAdmin)
 admin.site.register(SuggestionParticipant, SuggestionParticipantAdmin)
 admin.site.register(SuggestionAcceptance, SuggestionAcceptanceAdmin)

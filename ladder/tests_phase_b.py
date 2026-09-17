@@ -8,6 +8,7 @@ from django.db import IntegrityError, close_old_connections, connection, transac
 from django.test import TransactionTestCase
 
 from .models import (
+    AdminNotification,
     AvailabilitySlot,
     ConfirmedMatchResult,
     LadderStanding,
@@ -16,7 +17,6 @@ from .models import (
     MatchReservation,
     MatchResultSubmission,
     MatchSuggestion,
-    AdminNotification,
     PlayerProfile,
     PointLedger,
     Team,

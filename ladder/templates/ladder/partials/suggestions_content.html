@@ -12,7 +12,7 @@
                     <time datetime="{{ option.starts_at|date:'c' }}">{{ option.starts_at|date:"D, M j" }} · {{ option.starts_at|date:"g:i A" }} – {{ option.ends_at|date:"g:i A T" }}</time>
                     <h3>{{ option.team_b.name }}</h3>
                     <div class="option-lineups"><p><strong>Your lineup</strong>{{ option.team_a_players.0.user.username }} / {{ option.team_a_players.1.user.username }}</p><p><strong>Opponent lineup</strong>{{ option.team_b_players.0.user.username }} / {{ option.team_b_players.1.user.username }}</p></div>
-                    <form method="post" action="{% url 'ladder:create_suggestion' forloop.counter0 %}">{% csrf_token %}<input type="hidden" name="candidate" value="{{ option.candidate_token }}"><button type="submit">Request match</button></form>
+                    <form method="post" action="{% url 'ladder:create_suggestion' %}">{% csrf_token %}<input type="hidden" name="candidate" value="{{ option.candidate_token }}"><button type="submit">Request match</button></form>
                 </article>
             {% empty %}
                 <div class="journey-empty"><p class="muted">No compatible suggestions yet.</p>

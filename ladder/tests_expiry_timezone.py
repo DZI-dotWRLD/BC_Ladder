@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone as datetime_timezone
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 
 from django.contrib.auth import get_user_model
@@ -208,14 +208,14 @@ class ConfiguredTimezoneTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         slot = save_availability(self.player.user, **form.cleaned_data)
         slot.refresh_from_db()
-        self.assertEqual(slot.starts_at, datetime(2027, 6, 1, 17, 15, tzinfo=datetime_timezone.utc))
+        self.assertEqual(slot.starts_at, datetime(2027, 6, 1, 17, 15, tzinfo=UTC))
         self.assertEqual(slot.start_time.hour, 18)
         self.assertEqual(slot.start_time.minute, 15)
         self.assertTrue(timezone.is_aware(slot.starts_at))
 
     def test_naive_service_input_uses_configured_zone(self):
         slot = save_availability(self.player.user, datetime(2027, 6, 1, 18), datetime(2027, 6, 1, 20))
-        self.assertEqual(slot.starts_at, datetime(2027, 6, 1, 17, tzinfo=datetime_timezone.utc))
+        self.assertEqual(slot.starts_at, datetime(2027, 6, 1, 17, tzinfo=UTC))
 
     def test_dst_ambiguous_and_nonexistent_wall_times_rejected(self):
         for value in ("2027-03-28T01:30", "2027-10-31T01:30"):

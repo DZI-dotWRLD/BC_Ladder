@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.messages import get_messages
 from django.core import mail
-from django.core.management import call_command, CommandError
+from django.core.management import CommandError, call_command
 from django.db import DatabaseError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -86,7 +86,7 @@ class ScoreInputBoundsTests(TestCase):
         user = get_user_model().objects.create_user("score-bounds-player")
         team_a = Team.objects.create(name="Score Bounds A", division=Team.DIVISION_MENS)
         team_b = Team.objects.create(name="Score Bounds B", division=Team.DIVISION_MENS)
-        profile = PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE, team=team_a)
+        profile = PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE)
         match = Match.objects.create(
             team_a=team_a,
             team_b=team_b,

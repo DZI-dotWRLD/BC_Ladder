@@ -1,6 +1,6 @@
 from datetime import timedelta
-from zoneinfo import ZoneInfo
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -50,9 +50,7 @@ class CandidateCommandTests(TestCase):
         return self.client.get(reverse("ladder:suggestions"), {"discover": "1"}).context["options"][0]
 
     def post(self, option, *, token=None):
-        return self.client.post(
-            reverse("ladder:create_suggestion", args=[999]), {"candidate": token or option["candidate_token"]}, follow=True
-        )
+        return self.client.post(reverse("ladder:create_suggestion"), {"candidate": token or option["candidate_token"]}, follow=True)
 
     def test_rank_change_does_not_change_selected_candidate_and_retry_is_idempotent(self):
         chosen = self.chosen()
@@ -88,7 +86,7 @@ class CandidateCommandTests(TestCase):
     def test_tampered_missing_and_other_actor_token_reject(self):
         chosen = self.chosen()
         self.post(chosen, token=chosen["candidate_token"] + "tampered")
-        self.client.post(reverse("ladder:create_suggestion", args=[0]))
+        self.client.post(reverse("ladder:create_suggestion"))
         self.client.force_login(self.players[1].user)
         self.post(chosen)
         self.assertFalse(MatchSuggestion.objects.exists())

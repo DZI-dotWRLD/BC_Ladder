@@ -22,7 +22,6 @@ class AdminInputBoundaryTests(TestCase):
             "TeamMembership",
             "LadderStanding",
             "AvailabilitySlot",
-            "Challenge",
             "MatchSuggestion",
             "SuggestionParticipant",
             "SuggestionAcceptance",
@@ -56,7 +55,8 @@ class AdminInputBoundaryTests(TestCase):
             self.assertIn(action, admin.site._registry[model].get_actions(self.request))
 
     def test_profile_admin_cannot_reassign_membership(self):
-        self.assertIn("team", admin.site._registry[models.PlayerProfile].get_readonly_fields(self.request))
+        self.assertNotIn("team", {field.name for field in models.PlayerProfile._meta.get_fields()})
+        self.assertNotIn("team", admin.site._registry[models.PlayerProfile].get_fields(self.request))
         self.assertEqual(admin.site._registry[models.Team].inlines, ())
 
     def test_staff_can_create_and_revoke_invites_but_not_edit_usage_or_delete(self):
