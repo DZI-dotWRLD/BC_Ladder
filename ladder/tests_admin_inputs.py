@@ -121,7 +121,7 @@ class AdminInputBoundaryTests(TestCase):
     def make_suggestion(self):
         players = []
         teams = []
-        start = timezone.now() + timedelta(days=7)
+        start = timezone.localtime(timezone.now()).replace(hour=18, minute=0, second=0, microsecond=0) + timedelta(days=7)
         end = start + timedelta(hours=1)
         for side in ("a", "b"):
             team = models.Team.objects.create(name=f"Boundary {side}", division=models.Team.DIVISION_MENS)
