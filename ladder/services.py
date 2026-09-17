@@ -541,6 +541,36 @@ def cancel_join_request(actor, player):
         return pending_request
 
 
+def anonymize_user_account(user):
+    """Deactivate and anonymize a user while preserving protected history."""
+    with transaction.atomic():
+        try:
+            player = PlayerProfile.objects.select_for_update().get(user_id=user.pk)
+        except PlayerProfile.DoesNotExist:
+            player = None
+
+        locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+        if player is not None:
+            active_availability = list(AvailabilitySlot.objects.filter(player=player, status=AvailabilitySlot.STATUS_ACTIVE).order_by("pk"))
+            for availability in active_availability:
+                cancel_availability(locked_user, availability)
+
+            while TeamMembership.objects.filter(player=player, status=TeamMembership.STATUS_JOIN_REQUESTED).exists():
+                cancel_join_request(locked_user, player)
+
+        locked_user.is_active = False
+        locked_user.email = ""
+        locked_user.first_name = ""
+        locked_user.last_name = ""
+        locked_user.username = f"removed-{locked_user.pk}"
+        locked_user.set_unusable_password()
+        try:
+            locked_user.save(update_fields=["is_active", "email", "first_name", "last_name", "username", "password"])
+        except IntegrityError as error:
+            raise InvalidInput("The anonymized username is already in use.") from error
+        return locked_user
+
+
 def resolve_membership_request(admin_actor, membership, decision):
     if not getattr(admin_actor, "is_staff", False):
         raise AuthorizationFailure("Only administrators may resolve membership requests.")

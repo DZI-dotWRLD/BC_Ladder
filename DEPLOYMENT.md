@@ -361,13 +361,18 @@ restore is the recovery boundary, not an improvised SQL edit.
 1. Authenticate the requester outside application logs and record the request
    in the club's restricted support system using the user ID, not copied match
    or email data.
-2. Immediately deactivate the account in Django admin if access must stop. Do
-   not delete the user, profile, memberships, matches, scores, ledgers, or
-   workflow history, and do not manually rewrite protected foreign keys.
-3. Production removal remains blocked until the supported `anonymize_user`
-   command from hardening Task 14 is deployed. Once available, use only that
-   command so availability and pending membership requests are cancelled through
-   services and historical rows remain intact.
-4. Run `audit_data_integrity`, verify the account cannot authenticate, and
+2. Run the supported command using the account's current username:
+
+```bash
+python manage.py anonymize_user <username>
+```
+
+   The command deactivates the account, removes its identifying user fields,
+   assigns the stable `removed-<user-id>` username, sets an unusable password,
+   and cancels active availability and pending join requests through domain
+   services. It never deletes profiles, memberships, matches, scores, ledgers,
+   workflow history, or other protected records.
+3. Do not manually rewrite protected foreign keys or edit historical rows.
+4. Run `python manage.py audit_data_integrity`, verify the account cannot authenticate, and
    record completion without placing the former email or name in workflow-event
    metadata.
