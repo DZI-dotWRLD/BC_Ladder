@@ -16,6 +16,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+from csp.constants import NONE, SELF
 from django.core.exceptions import ImproperlyConfigured
 
 from .sentry import initialize_sentry
@@ -90,6 +91,7 @@ CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 INSTALLED_APPS = [
     "ladder",
     "axes",
+    "csp",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -100,6 +102,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "csp.middleware.CSPMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -228,8 +231,21 @@ if EMAIL_USE_TLS and EMAIL_USE_SSL:
     raise ImproperlyConfigured("DJANGO_EMAIL_USE_TLS and DJANGO_EMAIL_USE_SSL cannot both be true.")
 
 SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
+SESSION_COOKIE_AGE = int(os.environ.get("DJANGO_SESSION_COOKIE_AGE", str(14 * 24 * 60 * 60)))
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", not DEBUG)
+SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", not DEBUG)
+CSRF_COOKIE_SAMESITE = "Lax"
+CONTENT_SECURITY_POLICY = {
+    "DIRECTIVES": {
+        "default-src": [SELF],
+        "img-src": [SELF, "data:"],
+        "style-src": [SELF],
+        "script-src": [SELF],
+        "form-action": [SELF],
+        "frame-ancestors": [NONE],
+    }
+}
 SECURE_PROXY_SSL_HEADER_NAME = os.environ.get("DJANGO_SECURE_PROXY_SSL_HEADER_NAME", "")
 SECURE_PROXY_SSL_HEADER_VALUE = os.environ.get("DJANGO_SECURE_PROXY_SSL_HEADER_VALUE", "")
 SECURE_PROXY_SSL_HEADER = (

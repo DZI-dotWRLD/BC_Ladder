@@ -5,6 +5,9 @@ supports player profiles, men's and women's teams, availability, opponent
 suggestions, dual-team match acceptance, score submission, standings, and admin
 operations.
 
+See [Architecture](docs/architecture.md) for the domain model, state machines,
+service boundaries, concurrency protocol, operations, and configuration map.
+
 ## Local Setup
 
 From PowerShell:
@@ -138,6 +141,7 @@ DJANGO_ALLOWED_HOSTS
 DJANGO_CSRF_TRUSTED_ORIGINS
 DATABASE_URL
 DJANGO_SECURE_SSL_REDIRECT=true
+DJANGO_SESSION_COOKIE_AGE=1209600
 DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend

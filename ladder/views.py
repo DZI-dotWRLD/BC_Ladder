@@ -1,3 +1,5 @@
+"""HTTP views that authorize requests and orchestrate ladder services."""
+
 from datetime import timedelta
 
 from django.contrib import messages

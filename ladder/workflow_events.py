@@ -1,3 +1,5 @@
+"""Append-only workflow-event and recipient snapshot helpers."""
+
 from django.contrib.auth import get_user_model
 
 from .models import WorkflowEvent, WorkflowEventRecipient

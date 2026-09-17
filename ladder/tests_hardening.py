@@ -7,6 +7,7 @@ from datetime import date, time, timedelta
 from io import StringIO
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.messages import get_messages
@@ -22,8 +23,132 @@ from django.utils.http import urlsafe_base64_decode
 from config.sentry import FILTERED_VALUE, initialize_sentry, scrub_sentry_event
 
 from .forms import ScoreSubmissionForm
-from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, RateLimitEvent, Team
+from .models import (
+    AvailabilitySlot,
+    Match,
+    MatchParticipant,
+    PlayerProfile,
+    RateLimitEvent,
+    Team,
+    TeamMembership,
+    WorkflowEvent,
+)
 from .services import InvalidInput, validate_match_score
+
+
+class HeaderAndSessionHardeningTests(TestCase):
+    def test_login_response_enforces_content_security_policy(self):
+        response = self.client.get(reverse("ladder:login"))
+
+        directives = set(response.headers["Content-Security-Policy"].split("; "))
+        self.assertEqual(
+            directives,
+            {
+                "default-src 'self'",
+                "img-src 'self' data:",
+                "style-src 'self'",
+                "script-src 'self'",
+                "form-action 'self'",
+                "frame-ancestors 'none'",
+            },
+        )
+
+    def test_session_and_csrf_cookie_policy_is_lax(self):
+        self.assertEqual(settings.SESSION_COOKIE_AGE, 14 * 24 * 60 * 60)
+        self.assertEqual(settings.SESSION_COOKIE_SAMESITE, "Lax")
+        self.assertEqual(settings.CSRF_COOKIE_SAMESITE, "Lax")
+
+    def test_session_cookie_age_reads_environment(self):
+        environment = os.environ.copy()
+        environment.update({"DJANGO_DEBUG": "true", "DJANGO_SESSION_COOKIE_AGE": "3600"})
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import config.settings as settings; print(settings.SESSION_COOKIE_AGE)"],
+            cwd=os.fspath(os.path.dirname(os.path.dirname(__file__))),
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "3600")
+
+
+class AnonymizeUserCommandTests(TestCase):
+    def test_command_anonymizes_account_and_cancels_open_player_state(self):
+        user = get_user_model().objects.create_user(
+            username="remove-me",
+            password="RecoverablePass123!",
+            email="player@example.com",
+            first_name="Private",
+            last_name="Player",
+        )
+        player = PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE)
+        team = Team.objects.create(name="Pending removal team", division=Team.DIVISION_MENS)
+        membership = TeamMembership.objects.create(
+            player=player,
+            team=team,
+            status=TeamMembership.STATUS_JOIN_REQUESTED,
+            effective_from=timezone.now(),
+        )
+        second_team = Team.objects.create(name="Second pending team", division=Team.DIVISION_MENS)
+        second_membership = TeamMembership.objects.create(
+            player=player,
+            team=second_team,
+            status=TeamMembership.STATUS_JOIN_REQUESTED,
+            effective_from=timezone.now(),
+        )
+        availability = AvailabilitySlot.objects.create(
+            player=player,
+            week_start_date=date(2030, 1, 7),
+            day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
+            start_time=time(18),
+            end_time=time(19),
+            starts_at=timezone.now() + timedelta(days=1),
+            ends_at=timezone.now() + timedelta(days=1, hours=1),
+        )
+        output = StringIO()
+
+        call_command("anonymize_user", "remove-me", stdout=output)
+
+        user.refresh_from_db()
+        membership.refresh_from_db()
+        second_membership.refresh_from_db()
+        availability.refresh_from_db()
+        self.assertFalse(user.is_active)
+        self.assertEqual(user.username, f"removed-{user.pk}")
+        self.assertEqual(user.email, "")
+        self.assertEqual(user.first_name, "")
+        self.assertEqual(user.last_name, "")
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual(availability.status, AvailabilitySlot.STATUS_CANCELLED)
+        self.assertEqual(membership.status, TeamMembership.STATUS_INACTIVE)
+        self.assertEqual(second_membership.status, TeamMembership.STATUS_INACTIVE)
+        events = WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.JOIN_REQUEST_CANCELLED).order_by("pk")
+        self.assertEqual(
+            [event.metadata for event in events],
+            [
+                {"player_id": player.pk, "team_id": team.pk},
+                {"player_id": player.pk, "team_id": second_team.pk},
+            ],
+        )
+        self.assertNotIn("player@example.com", str([event.metadata for event in events]))
+        self.assertIn(f"Anonymized user ID {user.pk}", output.getvalue())
+
+    def test_command_anonymizes_user_without_player_profile(self):
+        user = get_user_model().objects.create_user(username="staff-only", email="staff@example.com")
+
+        call_command("anonymize_user", "staff-only", stdout=StringIO())
+
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+        self.assertEqual(user.username, f"removed-{user.pk}")
+        self.assertEqual(user.email, "")
+
+    def test_command_rejects_unknown_user_without_changes(self):
+        with self.assertRaisesMessage(CommandError, "User does not exist."):
+            call_command("anonymize_user", "missing-user", stdout=StringIO())
 
 
 class FailClosedSettingsTests(SimpleTestCase):

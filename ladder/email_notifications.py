@@ -1,3 +1,5 @@
+"""Transactional email outbox queuing, claiming, rendering, and delivery."""
+
 import logging
 import threading
 from datetime import datetime, timedelta
