@@ -1,14 +1,23 @@
-from collections import defaultdict
 from bisect import bisect_left
-from datetime import datetime, timedelta, timezone as datetime_timezone
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from itertools import combinations
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.core import signing
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Max, Q
+from django.template.loader import render_to_string
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
+from .email_notifications import queue_email_notifications
 from .models import (
     AdminNotification,
     AvailabilitySlot,
@@ -31,7 +40,6 @@ from .models import (
     TeamMembership,
     WorkflowEvent,
 )
-from .email_notifications import queue_email_notifications
 from .workflow_events import (
     active_staff_user_ids,
     match_participant_user_ids,
@@ -40,7 +48,6 @@ from .workflow_events import (
 )
 
 WIN_POINTS = 3
-DEFAULT_SUGGESTION_EXPIRY = timedelta(days=7)
 POSTGRES_AVAILABILITY_OVERLAP_CONSTRAINT = "availability_no_overlap_active_player"
 POSTGRES_RESERVATION_OVERLAP_CONSTRAINT = "reservation_no_overlap_active_player"
 STANDINGS_LOCK_NAMESPACE = 0x42434C44
@@ -66,6 +73,62 @@ class AuthorizationFailure(DomainError):
 
 class BookingCollision(DomainError):
     pass
+
+
+class ProvisioningError(DomainError):
+    pass
+
+
+def provision_first_administrator(username, email):
+    """Create and notify the first superuser, or report an existing provision."""
+    user_model = get_user_model()
+    if user_model.objects.filter(is_superuser=True).exists():
+        return None
+    username = (username or "").strip()
+    email = (email or "").strip()
+    if not username or not email:
+        raise ProvisioningError("Bootstrap administrator username and email are required.")
+
+    try:
+        with transaction.atomic():
+            if user_model.objects.select_for_update().filter(is_superuser=True).exists():
+                return None
+            user = user_model(
+                username=username,
+                email=user_model.objects.normalize_email(email),
+                is_active=True,
+                is_staff=True,
+                is_superuser=True,
+            )
+            user.set_unusable_password()
+            user.full_clean()
+            user.save()
+
+            domain = settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else "localhost"
+            context = {
+                "domain": domain,
+                "protocol": "http" if settings.DEBUG else "https",
+                "uid": urlsafe_base64_encode(force_bytes(user.pk)),
+                "token": default_token_generator.make_token(user),
+            }
+            try:
+                sent = send_mail(
+                    "Set your BC Tennis Ladder administrator password",
+                    render_to_string("registration/bootstrap_admin_email.txt", context),
+                    None,
+                    [user.email],
+                )
+            except Exception as error:
+                raise ProvisioningError("Administrator email could not be sent; no account was created.") from error
+            if sent != 1:
+                raise ProvisioningError("Administrator email could not be sent; no account was created.")
+            return user
+    except ValidationError as error:
+        raise ProvisioningError("Bootstrap administrator settings are invalid.") from error
+    except IntegrityError as error:
+        if user_model.objects.filter(is_superuser=True).exists():
+            return None
+        raise ProvisioningError("Bootstrap administrator conflicts with an existing account.") from error
 
 
 def rate_limit_key(scope, value):
@@ -138,24 +201,16 @@ def _validate_booking_roster(team_a, team_b, players_a, players_b):
 
 
 def _active_memberships_for_team(team):
-    memberships = list(
+    return list(
         TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE)
         .select_related("player__user", "team")
         .order_by("player_id")
     )
-    if memberships:
-        return memberships
-
-    now = timezone.now()
-    return [
-        TeamMembership(player=player, team=team, status=TeamMembership.STATUS_ACTIVE, effective_from=now)
-        for player in team.players.select_related("user").order_by("id")
-    ]
 
 
 def _active_team_for_player(player):
     membership = TeamMembership.objects.filter(player=player, status=TeamMembership.STATUS_ACTIVE).select_related("team").first()
-    return membership.team if membership else player.team
+    return membership.team if membership else None
 
 
 def _player_belongs_to_team(player, team):
@@ -197,7 +252,7 @@ def _make_aware(value):
         if value.replace(tzinfo=club_timezone, fold=0).utcoffset() != value.replace(tzinfo=club_timezone, fold=1).utcoffset():
             raise InvalidInput("Availability time is ambiguous or does not exist in the configured club timezone.")
         value = timezone.make_aware(value, club_timezone)
-    return value.astimezone(datetime_timezone.utc)
+    return value.astimezone(UTC)
 
 
 def _intervals_overlap(starts_a, ends_a, starts_b, ends_b):
@@ -356,8 +411,7 @@ def request_membership_change(actor, player, target_team=None, action="join"):
 
         _validate_player_division(locked_player, locked_team)
         active_count = TeamMembership.objects.select_for_update().filter(team=locked_team, status=TeamMembership.STATUS_ACTIVE).count()
-        legacy_count = locked_team.players.exclude(pk=locked_player.pk).count()
-        if max(active_count, legacy_count) >= 3:
+        if active_count >= 3:
             raise InvalidInput("Team already has three active members.")
 
         if action == "request_join":
@@ -396,8 +450,6 @@ def request_membership_change(actor, player, target_team=None, action="join"):
             status=TeamMembership.STATUS_ACTIVE,
             effective_from=timezone.now(),
         )
-        locked_player.team = locked_team
-        locked_player.save(update_fields=["team"])
         return membership
 
 
@@ -527,15 +579,12 @@ def resolve_membership_request(admin_actor, membership, decision):
                 active_count = (
                     TeamMembership.objects.select_for_update().filter(team=locked_team, status=TeamMembership.STATUS_ACTIVE).count()
                 )
-                legacy_count = locked_team.players.exclude(pk=locked_player.pk).count()
                 if locked_team.status != Team.STATUS_ACTIVE:
                     raise InvalidInput("Cannot join a retired team.")
-                if max(active_count, legacy_count) >= 3:
+                if active_count >= 3:
                     raise InvalidInput("Team already has three active members.")
                 locked_membership.status = TeamMembership.STATUS_ACTIVE
                 locked_membership.effective_from = now
-                locked_player.team = locked_team
-                locked_player.save(update_fields=["team"])
             else:
                 locked_membership.status = TeamMembership.STATUS_INACTIVE
                 locked_membership.effective_to = now
@@ -543,8 +592,6 @@ def resolve_membership_request(admin_actor, membership, decision):
             if decision == "approve":
                 locked_membership.status = TeamMembership.STATUS_INACTIVE
                 locked_membership.effective_to = now
-                locked_membership.player.team = None
-                locked_membership.player.save(update_fields=["team"])
             else:
                 locked_membership.removal_requested_at = None
         else:
@@ -801,48 +848,12 @@ def cancel_availability(actor, availability):
 def get_team_players(team: Team):
     """Return active player profiles assigned to the given team."""
     memberships = _active_memberships_for_team(team)
-    if memberships:
-        return PlayerProfile.objects.filter(id__in=[membership.player_id for membership in memberships]).order_by("id")
-    return team.players.order_by("id")
+    return PlayerProfile.objects.filter(id__in=[membership.player_id for membership in memberships]).order_by("id")
 
 
 def get_player_pairs(team: Team):
     """Return all possible stable two-player pairings for a team."""
     return list(combinations(list(get_team_players(team)), 2))
-
-
-def get_slot_key(slot):
-    """Return the values that define an exact legacy availability time."""
-    if slot.starts_at and slot.ends_at:
-        return (slot.starts_at, slot.ends_at)
-    return (slot.day_of_week, slot.start_time, slot.end_time)
-
-
-def get_pair_matching_slots(player_one: PlayerProfile, player_two: PlayerProfile, week_start_date):
-    """Return exact matching legacy availability slots shared by two players in a week."""
-    player_one_slots = list(
-        player_one.availability_slots.filter(
-            week_start_date=week_start_date,
-            status=AvailabilitySlot.STATUS_ACTIVE,
-        ).order_by("day_of_week", "start_time", "end_time", "id")
-    )
-    player_two_slot_keys = {
-        get_slot_key(slot)
-        for slot in player_two.availability_slots.filter(
-            week_start_date=week_start_date,
-            status=AvailabilitySlot.STATUS_ACTIVE,
-        )
-    }
-    return [slot_one for slot_one in player_one_slots if get_slot_key(slot_one) in player_two_slot_keys]
-
-
-def get_team_pair_availability(team: Team, week_start_date):
-    result_list = []
-    for player_one, player_two in get_player_pairs(team):
-        matching_slots = get_pair_matching_slots(player_one, player_two, week_start_date)
-        if matching_slots:
-            result_list.append({"players": (player_one, player_two), "slots": matching_slots})
-    return result_list
 
 
 def _active_intervals_for_player(player, interval=None):
@@ -889,31 +900,6 @@ def generate_team_lineups(team, interval=None):
                 }
             )
     return sorted(lineups, key=lambda item: (item["starts_at"], item["ends_at"], [p.id for p in item["players"]]))
-
-
-def find_team_match_options(team_a: Team, team_b: Team, week_start_date):
-    if team_a.id == team_b.id or team_a.division != team_b.division:
-        return []
-    match_options = []
-    team_a_availability = get_team_pair_availability(team_a, week_start_date)
-    team_b_availability = get_team_pair_availability(team_b, week_start_date)
-
-    team_b_pairs_by_slot = defaultdict(list)
-    for pair_availability in team_b_availability:
-        for slot in pair_availability["slots"]:
-            team_b_pairs_by_slot[get_slot_key(slot)].append(pair_availability["players"])
-
-    for team_a_pair_availability in team_a_availability:
-        for team_a_slot in team_a_pair_availability["slots"]:
-            for team_b_players in team_b_pairs_by_slot.get(get_slot_key(team_a_slot), []):
-                match_options.append(
-                    {
-                        "team_a_players": team_a_pair_availability["players"],
-                        "team_b_players": team_b_players,
-                        "slot": team_a_slot,
-                    }
-                )
-    return match_options
 
 
 def _matchmaking_snapshot(team, interval):
@@ -1224,6 +1210,25 @@ def create_match_suggestion(option, expires_at=None, actor=None):
         return suggestion
 
 
+def expire_open_suggestions(now=None):
+    """Expire overdue open suggestions under row locks and return the count."""
+    now = now or timezone.now()
+    open_statuses = [MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED]
+    with transaction.atomic():
+        locked_ids = list(
+            MatchSuggestion.objects.select_for_update(of=("self",))
+            .filter(status__in=open_statuses, expires_at__lte=now)
+            .order_by("pk")
+            .values_list("pk", flat=True)
+        )
+        if not locked_ids:
+            return 0
+        return MatchSuggestion.objects.filter(pk__in=locked_ids).update(
+            status=MatchSuggestion.STATUS_EXPIRED,
+            updated_at=now,
+        )
+
+
 def _players_for_suggestion(suggestion):
     participants = list(suggestion.participants.select_related("player", "team").order_by("side", "lineup_order", "player_id"))
     by_side = defaultdict(list)
@@ -1240,8 +1245,8 @@ def _players_for_suggestion(suggestion):
     return by_side
 
 
-def accept_suggestion(actor, suggestion, expected_version):
-    result = _accept_suggestion_transaction(actor, suggestion, expected_version)
+def accept_suggestion(actor, suggestion):
+    result = _accept_suggestion_transaction(actor, suggestion)
     # Expiry is a durable lifecycle transition, not a failed booking write.
     # Raise only after its transaction has committed; other errors still roll back.
     if isinstance(result, StaleState):
@@ -1249,7 +1254,7 @@ def accept_suggestion(actor, suggestion, expected_version):
     return result
 
 
-def _accept_suggestion_transaction(actor, suggestion, expected_version):
+def _accept_suggestion_transaction(actor, suggestion):
     actor_profile = _profile_for_user(actor)
     with transaction.atomic():
         reference = MatchSuggestion.objects.get(pk=suggestion.pk)
@@ -1260,8 +1265,6 @@ def _accept_suggestion_transaction(actor, suggestion, expected_version):
         if (locked.team_a_id, locked.team_b_id) != (reference.team_a_id, reference.team_b_id):
             raise StaleState("Suggestion teams changed while accepting.")
         locked.team_a, locked.team_b = teams[locked.team_a_id], teams[locked.team_b_id]
-        if locked.version != expected_version:
-            raise StaleState("Suggestion version is stale.")
         actor_team = _suggestion_side_for_player(locked, actor_profile)
         if actor_team is None or actor_team not in {locked.team_a, locked.team_b}:
             raise AuthorizationFailure("Only selected lineup players may accept this suggestion.")
@@ -1290,14 +1293,10 @@ def _accept_suggestion_transaction(actor, suggestion, expected_version):
         acceptance, _ = SuggestionAcceptance.objects.get_or_create(
             suggestion=locked,
             team=actor_team,
-            defaults={"accepted_by": actor, "accepted_version": expected_version},
+            defaults={"accepted_by": actor},
         )
-        if acceptance.accepted_version != expected_version:
-            raise StaleState("Existing acceptance is for a stale suggestion version.")
 
         acceptances = list(locked.acceptances.select_for_update(of=("self",)).order_by("pk"))
-        if any(row.accepted_version != expected_version for row in acceptances):
-            raise StaleState("Existing acceptance is for a stale suggestion version.")
         accepted_team_ids = {row.team_id for row in acceptances}
         required_team_ids = {locked.team_a_id, locked.team_b_id}
         if accepted_team_ids != required_team_ids:
@@ -1600,13 +1599,6 @@ def create_admin_notification_for_conflict(match, actor=None):
         return notification
 
 
-def complete_match_if_result_confirmed(match):
-    if get_match_status(match) != "confirmed":
-        return False
-    finalize_match_result(match)
-    return True
-
-
 def get_match_winner_and_loser(match):
     if get_match_status(match) != "confirmed":
         return []
@@ -1708,10 +1700,3 @@ def finalize_match_result(match):
 
         _apply_official_result(locked_match, submission, winner, loser)
         return locked_match.confirmed_result
-
-
-def update_ladder_stats_for_match(match):
-    if get_match_status(match) != "confirmed":
-        return False
-    finalize_match_result(match)
-    return True

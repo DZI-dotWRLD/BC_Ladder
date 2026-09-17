@@ -1,13 +1,9 @@
 from django import forms
-from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import UserCreationForm
 
 from .models import PlayerProfile, Team
 from .registration import EMAIL_CONFLICT, users_with_email
-
-
-class SuggestionAcceptanceForm(forms.Form):
-    version = forms.IntegerField(min_value=1, max_value=2147483647)
 
 
 class CandidateCommandForm(forms.Form):

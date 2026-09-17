@@ -24,6 +24,8 @@ DJANGO_EMAIL_HOST_USER=<gmail-sender-address>
 DJANGO_EMAIL_HOST_PASSWORD=<gmail-app-password>
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL=BC Tennis Ladder <gmail-sender-address>
+DJANGO_BOOTSTRAP_ADMIN_USERNAME=<initial-admin-username>
+DJANGO_BOOTSTRAP_ADMIN_EMAIL=<initial-admin-email>
 DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
 ```
 
@@ -38,12 +40,28 @@ PostgreSQL's default port.
 set, every entry must be an explicit HTTPS origin. Do not use local development
 origins or wildcards in production.
 
+`SENTRY_DSN` is optional. When unset, the Sentry SDK is not initialized and
+application behavior is unchanged. When set, Django error tracking is enabled
+with `send_default_pii=False`; email, password, authorization, and cookie fields
+are filtered again by the application's `before_send` hook. Store the DSN in the
+hosting provider's secret settings. On an existing Render Blueprint, add it
+manually to the web and cron services because newly added `sync: false`
+variables are ignored during updates.
+
 Password recovery requires a working SMTP account in every deployed
 environment. Keep its credentials in the hosting provider's secret store, not
 in source control. The example uses STARTTLS on port 587; for implicit TLS on
 port 465, set `DJANGO_EMAIL_USE_TLS=false` and `DJANGO_EMAIL_USE_SSL=true`.
 Verify the sender in your email provider before launch. Accounts created before
 email capture was added need an administrator to set a unique email address.
+
+`DJANGO_BOOTSTRAP_ADMIN_USERNAME` and `DJANGO_BOOTSTRAP_ADMIN_EMAIL` provision
+the first superuser during the release build. The account starts with an
+unusable password and receives a one-time password-reset link over the configured
+email backend. `bootstrap_admin` is idempotent: after any superuser exists it
+exits successfully with `Administrator already provisioned.` and sends no email.
+Keep both values in the hosting provider's secret environment settings. A failed
+initial email rolls back account creation so the next release can retry.
 
 For Gmail SMTP, enable 2-Step Verification on the sender account and create an
 app password. Store it only in the hosting provider's secret environment
@@ -115,6 +133,7 @@ Run from the application checkout:
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 .\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\python.exe manage.py bootstrap_admin
 .\venv\Scripts\python.exe manage.py audit_data_integrity
 .\venv\Scripts\python.exe manage.py collectstatic --noinput
 .\venv\Scripts\python.exe manage.py check --deploy
@@ -153,10 +172,12 @@ Recommended first deploy sequence:
 
    ```bash
    python manage.py migrate
+   python manage.py bootstrap_admin
    python manage.py audit_data_integrity
    ```
 
-6. Visit `https://<render-host>/health/` and confirm `{"status": "ok"}`.
+6. Visit `https://<render-host>/health/` and confirm `{"status": "ok"}`, then
+   visit `/health/ready/` and confirm `{"status": "ready"}`.
 7. Register a temporary player account through `/accounts/register/`.
 
 `DJANGO_ALLOWED_HOSTS` is optional for the first `.onrender.com` trial because
@@ -166,21 +187,48 @@ the app accepts Render's `RENDER_EXTERNAL_HOSTNAME` as the default host. Set
 Do not run migrations inside the start command. That can create startup races
 and makes rollback harder.
 
+## Scheduled operations
+
+`render.yaml` defines four independent cron jobs. Render schedules use UTC.
+
+| Job | Schedule | Command |
+| --- | --- | --- |
+| Notification delivery | Every minute | `python manage.py send_notification_emails --retry-failed` |
+| Suggestion expiry | Every 5 minutes | `python manage.py expire_suggestions` |
+| Integrity audit | Daily at 02:00 UTC | `python manage.py audit_data_integrity` |
+| Rate-limit cleanup | Daily at 02:30 UTC | `python manage.py purge_rate_limit_events` |
+
+Render cron jobs are paid services and each has a minimum monthly charge. A
+hosting tier that cannot run these schedules, or an external scheduler that has
+not been configured with equivalent commands and monitoring, is a hard release
+blocker. On an existing Render Blueprint, add the SMTP username, password, and
+default sender to the notification cron service manually because Render ignores
+new `sync: false` variables during Blueprint updates. Manually trigger every job
+once, confirm a zero exit status, then check its next scheduled run. Alert on
+failed or missing runs; do not assume a configured schedule is executing.
+
 ## Smoke checks
 
 After deploy:
 
 ```text
 GET /health/ -> 200 {"status": "ok"}
+GET /health/ready/ -> 200 {"status": "ready"}
 GET /accounts/login/ -> 200
 GET /accounts/password-reset/ -> 200
 GET /ladders/mens/ as an authenticated user -> 200
 GET /ladders/womens/ as an authenticated user -> 200
 ```
 
-`/health/` is intentionally public and does not touch the database. It verifies
-that the Django process can route requests. Database health is covered by
-migrations, `audit_data_integrity`, and application smoke checks.
+Both health endpoints are intentionally public and return `Cache-Control:
+no-store`. `/health/` does not touch the database and verifies that the Django
+process can route requests. `/health/ready/` runs `SELECT 1`; it returns HTTP 503
+with `{"status": "degraded"}` when the database is unavailable.
+
+Run `python manage.py expire_suggestions` to durably mark overdue proposed and
+partially accepted suggestions as expired. The UI also treats overdue rows as
+closed before the sweep runs, so an overdue request never presents an Accept
+action.
 
 ## Static files
 
@@ -188,7 +236,15 @@ Static files are served by WhiteNoise from `STATIC_ROOT=staticfiles/`.
 `collectstatic --noinput` must run before each deployment. The staticfiles
 directory is generated and must not be committed.
 
-## Backup and restore
+## Backups
+
+Production requires both continuous point-in-time recovery (PITR) and an
+automated daily logical backup stored outside the database provider. Render Free
+Postgres provides neither and must not hold real club data. Before launch,
+upgrade to paid Postgres, confirm the Recovery page shows an active PITR window,
+and configure a daily encrypted `pg_dump` upload to restricted off-provider
+storage with retention and deletion alerts. Retain at least 30 daily backups;
+never keep the only backup on a Render service's ephemeral filesystem.
 
 Before production migrations:
 
@@ -199,14 +255,23 @@ pg_dump --format=custom --file=bc_ladder_before_migrate.dump "$DATABASE_URL"
 For environments that do not expose `DATABASE_URL`, use equivalent `pg_dump`
 host/user/database flags from the `DJANGO_DB_*` variables.
 
-Restore rehearsal should be performed against a non-production database:
+For the daily job, use the same custom format with `--no-owner --no-privileges`,
+record a SHA-256 checksum, upload the dump and checksum, verify their presence,
+and only then expire old backups. Treat a missed backup, failed upload, or failed
+PITR checkpoint as an incident.
+
+Perform a restore rehearsal before launch and at least quarterly:
+
+1. Download one daily backup and verify its checksum.
+2. Create a disposable, non-production PostgreSQL database.
+3. Restore without pointing any production service at it:
 
 ```bash
 createdb bc_ladder_restore_test
-pg_restore --dbname=bc_ladder_restore_test --clean --if-exists bc_ladder_before_migrate.dump
+pg_restore --dbname=bc_ladder_restore_test --clean --if-exists --no-owner --no-privileges bc_ladder_before_migrate.dump
 ```
 
-After restore, point a staging app at the restored database and run:
+4. Point a staging app at the restored database and run:
 
 ```powershell
 .\venv\Scripts\python.exe manage.py migrate
@@ -214,10 +279,89 @@ After restore, point a staging app at the restored database and run:
 .\venv\Scripts\python.exe manage.py check --deploy
 ```
 
-## Rollback notes
+5. Run the smoke checks, verify representative memberships, suggestions,
+   matches, scores, workflow events, and email-delivery rows, then record the
+   backup timestamp, restore duration, row checks, and operator.
+6. Rehearse PITR separately by restoring to a new database, validating it in
+   isolation, and deleting the rehearsal instance only after results are
+   recorded. Never overwrite the primary database during a rehearsal.
 
-- Code rollback is safe only to a version compatible with the migrated schema.
-- Database rollback requires a tested backup restore; do not rely on reversing
-  production migrations after real users have written data.
-- If `audit_data_integrity` fails, stop deployment and inspect the reported IDs
-  before starting the new application version.
+## Rollback
+
+1. Stop the release if migrations, `audit_data_integrity`, readiness, or smoke
+   checks fail. Pause the four cron jobs while database state is uncertain.
+2. Record the failing commit, migration state (`python manage.py showmigrations`),
+   and incident time. Preserve logs without copying emails or credentials.
+3. Roll code back to the previous immutable commit only when that code is
+   compatible with the current schema. Redeploy, run `check --deploy`, confirm
+   `/health/ready/`, and repeat the smoke checks.
+4. If the schema is incompatible or data is corrupted, restore with PITR to a
+   new database from before the incident. Validate it in staging, then update
+   `DATABASE_URL` for the web service and every cron job in one controlled
+   cutover.
+5. Resume cron jobs only after the web service and integrity audit are green.
+   Monitor the notification queue and suggestion sweep on their next runs.
+
+Do not reverse production migrations after real users have written data unless
+the migration has an explicitly tested lossless reverse path. A backup or PITR
+restore is the recovery boundary, not an improvised SQL edit.
+
+## Incident runbooks
+
+### SMTP outage
+
+1. Confirm the web app and database are healthy. Match requests and score
+   conflicts remain committed even when mail fails.
+2. Pause the notification cron if the provider is rejecting every request.
+   Inspect delivery status, attempt count, and error category in read-only admin;
+   do not log recipient addresses or credentials.
+3. Verify provider status, sender verification, SMTP host/port/TLS settings, and
+   secret rotation. Send a provider test message outside the application.
+4. Resume the cron and run
+   `python manage.py send_notification_emails --retry-failed`. Use
+   `--retry-skipped` only after correcting missing or invalid user emails.
+5. Confirm pending/failed counts fall and record the affected workflow-event and
+   delivery IDs, outage window, and remediation.
+
+### Duplicate notification email
+
+1. Locate the `EmailNotificationDelivery` and related `WorkflowEvent` by ID.
+   Do not delete either historical row or replay the domain action.
+2. If duplicates continue, pause the notification cron. Confirm only one
+   scheduler is active and inspect claim tokens, lease expiry, attempt counts,
+   worker termination, and whether SMTP duration exceeded `EMAIL_TIMEOUT`.
+3. Remember delivery is at-least-once: SMTP may accept a message before a worker
+   crashes without recording success. Explain that outcome to affected users
+   without exposing other recipients.
+4. Correct the scheduler or timeout issue, resume one worker, and monitor the
+   next run. Never mark a row sent unless the delivery service does so.
+
+### Stuck score conflict
+
+1. Find the unresolved score-conflict `AdminNotification`, match, and both
+   immutable submissions. Do not edit scores, standings, ledgers, or resolution
+   flags directly.
+2. Confirm an authorized administrator has reviewed the players' evidence and
+   selected one existing submission as official.
+3. In Django admin, select that `MatchResultSubmission` and run **Use selected
+   submission as official score**. This calls the transactional service that
+   updates the result, standings, ledger, audit row, notification, and workflow
+   event together.
+4. Run `python manage.py audit_data_integrity`, verify the match is completed,
+   and record only object IDs and the administrator's incident note.
+
+### Player data-removal request
+
+1. Authenticate the requester outside application logs and record the request
+   in the club's restricted support system using the user ID, not copied match
+   or email data.
+2. Immediately deactivate the account in Django admin if access must stop. Do
+   not delete the user, profile, memberships, matches, scores, ledgers, or
+   workflow history, and do not manually rewrite protected foreign keys.
+3. Production removal remains blocked until the supported `anonymize_user`
+   command from hardening Task 14 is deployed. Once available, use only that
+   command so availability and pending membership requests are cancelled through
+   services and historical rows remain intact.
+4. Run `audit_data_integrity`, verify the account cannot authenticate, and
+   record completion without placing the former email or name in workflow-event
+   metadata.

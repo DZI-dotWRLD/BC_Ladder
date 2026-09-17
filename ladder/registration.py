@@ -14,7 +14,6 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from .models import InviteCode, PlayerProfile
 from .services import DomainError
 
-
 EMAIL_CONFLICT = "An account with this email address already exists."
 
 

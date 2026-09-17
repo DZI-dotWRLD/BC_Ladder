@@ -2,13 +2,14 @@ from datetime import date, time
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import RequestFactory, TestCase, override_settings
 from django.db import connection
+from django.test import RequestFactory, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils import timezone
 from django.views.defaults import server_error
 
-from .models import Match, MatchParticipant, MatchResultSubmission, PlayerProfile, Team
+from .models import Match, MatchParticipant, MatchResultSubmission, PlayerProfile, Team, TeamMembership
 
 
 class FrontendHardeningTests(TestCase):
@@ -18,8 +19,8 @@ class FrontendHardeningTests(TestCase):
         self.player = PlayerProfile.objects.create(
             user=get_user_model().objects.create_user(username="selected"),
             gender=PlayerProfile.GENDER_MALE,
-            team=self.team,
         )
+        TeamMembership.objects.create(player=self.player, team=self.team, effective_from=timezone.now())
         self.client.force_login(self.player.user)
 
     def make_match(self, selected=True):

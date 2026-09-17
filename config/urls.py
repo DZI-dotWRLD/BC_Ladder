@@ -18,10 +18,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
-from .views import health_check
+from .views import health_check, readiness_check
 
 urlpatterns = [
     path("health/", health_check, name="health"),
+    path("health/ready/", readiness_check, name="readiness"),
     path("", include("ladder.urls")),
     path("admin/", admin.site.urls),
 ]

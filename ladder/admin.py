@@ -1,13 +1,9 @@
-from django.contrib import admin
-from django.contrib import messages
+from django.contrib import admin, messages
 from django.utils import timezone
-
-from .services import DomainError, cancel_match, resolve_membership_request, resolve_score_conflict
 
 from .models import (
     AdminNotification,
     AvailabilitySlot,
-    Challenge,
     ConfirmedMatchResult,
     EmailNotificationDelivery,
     InviteCode,
@@ -28,6 +24,7 @@ from .models import (
     WorkflowEvent,
     WorkflowEventRecipient,
 )
+from .services import DomainError, cancel_match, resolve_membership_request, resolve_score_conflict
 
 
 class InviteCodeAdmin(admin.ModelAdmin):
@@ -78,11 +75,34 @@ class TeamAdmin(admin.ModelAdmin):
     list_display = ("name", "division", "status", "created_at")
     list_filter = ("division", "status")
 
+    def get_readonly_fields(self, request, obj=None):
+        readonly = []
+        if obj is not None and obj.memberships.exists():
+            readonly.append("division")
+        if obj is not None and (
+            obj.memberships.filter(status=TeamMembership.STATUS_ACTIVE).exists()
+            or obj.team_a.filter(status=Match.STATUS_SCHEDULED).exists()
+            or obj.team_b.filter(status=Match.STATUS_SCHEDULED).exists()
+        ):
+            readonly.append("status")
+        return tuple(readonly)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 class PlayerProfileAdmin(admin.ModelAdmin):
-    readonly_fields = ("team",)
-    list_display = ("user", "gender", "team", "created_at")
-    list_select_related = ("user", "team")
+    list_display = ("user", "gender", "created_at")
+    list_select_related = ("user",)
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(super().get_readonly_fields(request, obj))
+        if obj is not None and (obj.team_memberships.exists() or obj.suggestion_participants.exists() or obj.match_participations.exists()):
+            readonly.append("gender")
+        return tuple(readonly)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class TeamMembershipAdmin(WorkflowOwnedAdmin):
@@ -183,21 +203,6 @@ class AvailabilitySlotAdmin(WorkflowOwnedAdmin):
     ordering = ("starts_at", "week_start_date", "day_of_week", "start_time")
 
 
-class ChallengeAdmin(WorkflowOwnedAdmin):
-    list_display = (
-        "challenger_team",
-        "opponent_team",
-        "proposed_week_start_date",
-        "proposed_day_of_week",
-        "proposed_start_time",
-        "proposed_end_time",
-        "status",
-    )
-    filter_horizontal = ("challenger_players", "opponent_players")
-    list_filter = ("status", "proposed_week_start_date", "proposed_day_of_week")
-    ordering = ("proposed_week_start_date", "proposed_day_of_week", "proposed_start_time")
-
-
 class MatchAdmin(WorkflowOwnedAdmin):
     list_display = (
         "team_a",
@@ -279,10 +284,10 @@ class AdminNotificationAdmin(WorkflowOwnedAdmin):
 
 
 class MatchSuggestionAdmin(WorkflowOwnedAdmin):
-    list_display = ("team_a", "team_b", "starts_at", "ends_at", "status", "version", "expires_at")
+    list_display = ("team_a", "team_b", "starts_at", "ends_at", "status", "expires_at")
     list_filter = ("status", "team_a__division")
     list_select_related = ("team_a", "team_b")
-    readonly_fields = ("status", "version", "created_at", "updated_at")
+    readonly_fields = ("status", "created_at", "updated_at")
 
 
 class SuggestionParticipantAdmin(WorkflowOwnedAdmin):
@@ -291,9 +296,9 @@ class SuggestionParticipantAdmin(WorkflowOwnedAdmin):
 
 
 class SuggestionAcceptanceAdmin(WorkflowOwnedAdmin):
-    list_display = ("suggestion", "team", "accepted_by", "accepted_version", "created_at")
+    list_display = ("suggestion", "team", "accepted_by", "created_at")
     list_select_related = ("suggestion", "team", "accepted_by")
-    readonly_fields = ("suggestion", "team", "accepted_by", "accepted_version", "created_at")
+    readonly_fields = ("suggestion", "team", "accepted_by", "created_at")
 
 
 class MatchParticipantAdmin(WorkflowOwnedAdmin):
@@ -473,7 +478,6 @@ admin.site.register(Team, TeamAdmin)
 admin.site.register(TeamMembership, TeamMembershipAdmin)
 admin.site.register(LadderStanding, LadderStandingAdmin)
 admin.site.register(AvailabilitySlot, AvailabilitySlotAdmin)
-admin.site.register(Challenge, ChallengeAdmin)
 admin.site.register(MatchSuggestion, MatchSuggestionAdmin)
 admin.site.register(SuggestionParticipant, SuggestionParticipantAdmin)
 admin.site.register(SuggestionAcceptance, SuggestionAcceptanceAdmin)

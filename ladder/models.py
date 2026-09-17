@@ -89,38 +89,10 @@ class PlayerProfile(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    team = models.ForeignKey(
-        Team,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="players",
-    )
-
-    def clean(self):
-        super().clean()
-
-        if self.team is None:
-            return
-
-        if self.gender == self.GENDER_MALE and self.team.division != Team.DIVISION_MENS:
-            raise ValidationError("Male players can only join men's teams.")
-
-        if self.gender == self.GENDER_FEMALE and self.team.division != Team.DIVISION_WOMENS:
-            raise ValidationError("Female players can only join women's teams.")
-
-        existing_players = self.team.players.all()
-
-        if self.pk:
-            existing_players = existing_players.exclude(pk=self.pk)
-
-        if existing_players.count() >= 3:
-            raise ValidationError("Unfortunately, you can't join this team because it already has 3 players.")
-
     @property
     def active_team(self):
         membership = self.team_memberships.filter(status=TeamMembership.STATUS_ACTIVE).select_related("team").first()
-        return membership.team if membership else self.team
+        return membership.team if membership else None
 
     def __str__(self):
         return f"{self.user.username} profile"
@@ -295,75 +267,6 @@ class AvailabilitySlot(models.Model):
         return f"{self.player.user.username} - {self.get_day_of_week_display()} {self.start_time}-{self.end_time}"
 
 
-class Challenge(models.Model):
-    STATUS_PENDING = "pending"
-    STATUS_ACCEPTED = "accepted"
-    STATUS_DECLINED = "declined"
-    STATUS_CANCELLED = "cancelled"
-
-    STATUS_CHOICES = [
-        (STATUS_PENDING, "Pending"),
-        (STATUS_ACCEPTED, "Accepted"),
-        (STATUS_DECLINED, "Declined"),
-        (STATUS_CANCELLED, "Cancelled"),
-    ]
-
-    challenger_team = models.ForeignKey(
-        Team,
-        on_delete=models.CASCADE,
-        related_name="sent_challenges",
-    )
-    opponent_team = models.ForeignKey(
-        Team,
-        on_delete=models.CASCADE,
-        related_name="received_challenges",
-    )
-    challenger_players = models.ManyToManyField(
-        PlayerProfile,
-        related_name="challenger_challenges",
-        blank=True,
-    )
-    opponent_players = models.ManyToManyField(
-        PlayerProfile,
-        related_name="opponent_challenges",
-        blank=True,
-    )
-    proposed_week_start_date = models.DateField()
-    proposed_day_of_week = models.CharField(
-        max_length=10,
-        choices=AvailabilitySlot.DayOfWeek.choices,
-    )
-    proposed_start_time = models.TimeField()
-    proposed_end_time = models.TimeField()
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default=STATUS_PENDING,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def clean(self):
-        super().clean()
-
-        if self.challenger_team_id and self.opponent_team_id:
-            if self.challenger_team_id == self.opponent_team_id:
-                raise ValidationError("A team cannot challenge itself.")
-
-            if self.challenger_team.division != self.opponent_team.division:
-                raise ValidationError("Teams must be in the same division.")
-
-        if self.proposed_start_time >= self.proposed_end_time:
-            raise ValidationError("Proposed start time must be before proposed end time.")
-
-    def __str__(self):
-        return (
-            f"{self.challenger_team} vs {self.opponent_team} - "
-            f"{self.get_proposed_day_of_week_display()} "
-            f"{self.proposed_start_time}-{self.proposed_end_time}"
-        )
-
-
 class MatchSuggestion(models.Model):
     STATUS_PROPOSED = "proposed"
     STATUS_PARTIALLY_ACCEPTED = "partially_accepted"
@@ -386,7 +289,6 @@ class MatchSuggestion(models.Model):
     starts_at = models.DateTimeField()
     ends_at = models.DateTimeField()
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_PROPOSED)
-    version = models.PositiveIntegerField(default=1)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -436,7 +338,6 @@ class SuggestionAcceptance(models.Model):
     suggestion = models.ForeignKey(MatchSuggestion, on_delete=models.CASCADE, related_name="acceptances")
     team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="suggestion_acceptances")
     accepted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="suggestion_acceptances")
-    accepted_version = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

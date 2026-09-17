@@ -8,6 +8,7 @@ from django.db import IntegrityError, close_old_connections, connection, transac
 from django.test import TransactionTestCase
 
 from .models import (
+    AdminNotification,
     AvailabilitySlot,
     ConfirmedMatchResult,
     LadderStanding,
@@ -16,7 +17,6 @@ from .models import (
     MatchReservation,
     MatchResultSubmission,
     MatchSuggestion,
-    AdminNotification,
     PlayerProfile,
     PointLedger,
     Team,
@@ -183,20 +183,18 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         option_c = next(option for option in options if option["team_b"].id == team_c.id)
         suggestion_b = create_match_suggestion(option_b, expires_at=self.make_dt(2027, 9, 2, 18))
         suggestion_c = create_match_suggestion(option_c, expires_at=self.make_dt(2027, 9, 2, 18))
-        accept_suggestion(team_a_players[0].user, suggestion_b, suggestion_b.version)
-        accept_suggestion(team_a_players[0].user, suggestion_c, suggestion_c.version)
+        accept_suggestion(team_a_players[0].user, suggestion_b)
+        accept_suggestion(team_a_players[0].user, suggestion_c)
 
         results = self.run_concurrently(
             [
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_b_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion_b.pk),
-                    suggestion_b.version,
                 ),
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_c_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion_c.pk),
-                    suggestion_c.version,
                 ),
             ]
         )
@@ -226,12 +224,10 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_a_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion.pk),
-                    suggestion.version,
                 ),
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_b_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion.pk),
-                    suggestion.version,
                 ),
             ]
         )
@@ -259,12 +255,10 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_a_players[0].user_id),
                     MatchSuggestion.objects.get(pk=suggestion.pk),
-                    suggestion.version,
                 ),
                 lambda: accept_suggestion(
                     get_user_model().objects.get(pk=team_a_players[1].user_id),
                     MatchSuggestion.objects.get(pk=suggestion.pk),
-                    suggestion.version,
                 ),
             ]
         )
@@ -638,8 +632,8 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
             save_availability(player.user, starts_at, ends_at)
         option = find_opponent_suggestions(team_a, (starts_at, ends_at))[0]
         suggestion = create_match_suggestion(option, expires_at=self.make_dt(2027, 9, 27, 18))
-        accept_suggestion(team_a_players[0].user, suggestion, suggestion.version)
-        match = accept_suggestion(team_b_players[0].user, suggestion, suggestion.version)
+        accept_suggestion(team_a_players[0].user, suggestion)
+        match = accept_suggestion(team_b_players[0].user, suggestion)
 
         results = self.run_concurrently(
             [

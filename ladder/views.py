@@ -16,7 +16,6 @@ from .forms import (
     PlayerRegistrationForm,
     ProfileSetupForm,
     ScoreSubmissionForm,
-    SuggestionAcceptanceForm,
     TeamCreateForm,
     TeamJoinForm,
     VerificationResendForm,
@@ -48,12 +47,12 @@ from .services import (
     cancel_match,
     create_match_suggestion_from_candidate,
     create_team_for_player,
+    enforce_rate_limit,
     find_opponent_suggestions,
     generate_team_lineups,
     get_match_status,
-    request_membership_change,
-    enforce_rate_limit,
     rate_limit_key,
+    request_membership_change,
     save_availability,
     sign_candidate,
     submit_match_result,
@@ -75,7 +74,7 @@ class RateLimitedPasswordResetView(PasswordResetView):
 
 
 def _profile_for_request(request):
-    profile = PlayerProfile.objects.select_related("user", "team").filter(user=request.user).first()
+    profile = PlayerProfile.objects.select_related("user").filter(user=request.user).first()
     if profile is None:
         raise PlayerProfile.DoesNotExist
     return profile
@@ -95,7 +94,7 @@ def _active_membership(profile):
 
 def _active_team(profile):
     membership = _active_membership(profile)
-    return membership.team if membership else profile.team
+    return membership.team if membership else None
 
 
 def _message_domain_error(request, error):
@@ -208,9 +207,7 @@ def _setup_steps_for_profile(profile, team, active_availability_count, suggestio
 
 
 def _active_member_count(team):
-    membership_count = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count()
-    legacy_count = team.players.count()
-    return max(membership_count, legacy_count)
+    return TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).count()
 
 
 def _suggestion_empty_state(profile, team, interval, options):
@@ -278,6 +275,7 @@ def _lineup_label(players):
 def _suggestion_cards(suggestions, profile, team):
     cards = []
     open_statuses = {MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED}
+    now = timezone.now()
     for suggestion in suggestions:
         participants = list(suggestion.participants.all())
         players_by_side = {
@@ -291,10 +289,13 @@ def _suggestion_cards(suggestions, profile, team):
         own_team_accepted = team.id in accepted_team_ids
         required_team_ids = {suggestion.team_a_id, suggestion.team_b_id}
         is_selected_player = profile.id in {participant.player_id for participant in participants}
-        is_open = suggestion.status in open_statuses
+        is_overdue = suggestion.status in open_statuses and suggestion.expires_at <= now
+        is_open = suggestion.status in open_statuses and not is_overdue
         can_accept = is_open and is_selected_player and not own_team_accepted
 
-        if suggestion.status == MatchSuggestion.STATUS_CONFIRMED:
+        if is_overdue:
+            state_note = "This suggestion expired."
+        elif suggestion.status == MatchSuggestion.STATUS_CONFIRMED:
             state_note = "Match confirmed."
         elif suggestion.status in {MatchSuggestion.STATUS_CANCELLED, MatchSuggestion.STATUS_DECLINED, MatchSuggestion.STATUS_EXPIRED}:
             state_note = f"This suggestion is {suggestion.get_status_display().lower()}."
@@ -402,6 +403,7 @@ def dashboard(request):
     active_availability = profile.availability_slots.filter(status=AvailabilitySlot.STATUS_ACTIVE)
     availability = active_availability.order_by("starts_at")[:5]
     suggestions_qs = MatchSuggestion.objects.none()
+    suggestion_count = 0
     matches_qs = _player_match_queryset(profile)
     next_match = (
         matches_qs.filter(
@@ -425,17 +427,24 @@ def dashboard(request):
     team_b_players = [participant for participant in match_participants if participant.side == "b"]
     standing = LadderStanding.objects.filter(team=team).first() if team else None
     if team:
-        suggestions_qs = (
-            MatchSuggestion.objects.filter(Q(team_a=team) | Q(team_b=team))
+        open_statuses = [MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED]
+        suggestions_base_qs = (
+            MatchSuggestion.objects.filter(
+                Q(team_a=team) | Q(team_b=team),
+                status__in=open_statuses,
+                expires_at__gt=timezone.now(),
+            )
             .select_related("team_a", "team_b")
             .prefetch_related("participants__player__user", "acceptances")
-            .order_by("starts_at")[:5]
+            .order_by("starts_at")
         )
+        suggestion_count = suggestions_base_qs.count()
+        suggestions_qs = suggestions_base_qs[:5]
     setup_steps = _setup_steps_for_profile(
         profile,
         team,
         active_availability.count(),
-        suggestions_qs.count(),
+        suggestion_count,
         matches_qs.count(),
     )
     needs_setup = any(not step["complete"] for step in setup_steps)
@@ -463,7 +472,7 @@ def team_detail(request):
     if profile is None:
         return redirect("ladder:profile_setup")
     membership = _active_membership(profile)
-    team = membership.team if membership else profile.team
+    team = membership.team if membership else None
     members = []
     member_count = 0
     team_capacity = 3
@@ -471,9 +480,7 @@ def team_detail(request):
     pending_join_request = None
     if team:
         member_ids = TeamMembership.objects.filter(team=team, status=TeamMembership.STATUS_ACTIVE).values_list("player_id", flat=True)
-        members = (
-            PlayerProfile.objects.filter(Q(id__in=member_ids) | Q(team=team)).select_related("user").distinct().order_by("user__username")
-        )
+        members = PlayerProfile.objects.filter(id__in=member_ids).select_related("user").order_by("user__username")
         member_count = len(members)
         team_is_full = member_count >= team_capacity
     else:
@@ -630,7 +637,11 @@ def suggestions(request):
             .prefetch_related("participants__player__user", "acceptances")
             .annotate(
                 open_priority=Case(
-                    When(status__in=[MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED], then=Value(0)),
+                    When(
+                        status__in=[MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED],
+                        expires_at__gt=starts_at,
+                        then=Value(0),
+                    ),
                     default=Value(1),
                     output_field=IntegerField(),
                 )
@@ -657,8 +668,7 @@ def suggestions(request):
 
 
 @login_required
-def create_suggestion_view(request, option_index):
-    # Legacy URL argument is presentation-only; never reselect a ranked list index.
+def create_suggestion_view(request):
     if request.method != "POST":
         return redirect("ladder:suggestions")
     profile = _profile_or_setup(request)
@@ -690,12 +700,8 @@ def accept_suggestion_view(request, suggestion_id):
     if profile is None:
         return redirect("ladder:profile_setup")
     suggestion = get_object_or_404(MatchSuggestion.objects.filter(participants__player=profile), pk=suggestion_id)
-    form = SuggestionAcceptanceForm(request.POST)
-    if not form.is_valid():
-        messages.error(request, "Enter a valid suggestion version and try again.")
-        return redirect("ladder:suggestions")
     try:
-        result = accept_suggestion(request.user, suggestion, form.cleaned_data["version"])
+        result = accept_suggestion(request.user, suggestion)
         if isinstance(result, Match):
             messages.success(request, "Match confirmed.")
             return redirect("ladder:match_detail", match_id=result.id)

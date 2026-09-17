@@ -1,15 +1,25 @@
 import os
+import re
 import subprocess
 import sys
+import unittest
 from datetime import date, time, timedelta
 from io import StringIO
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.messages import get_messages
-from django.core.management import call_command
-from django.test import SimpleTestCase, TestCase
+from django.core import mail
+from django.core.management import CommandError, call_command
+from django.db import DatabaseError
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
+
+from config.sentry import FILTERED_VALUE, initialize_sentry, scrub_sentry_event
 
 from .forms import ScoreSubmissionForm
 from .models import AvailabilitySlot, Match, MatchParticipant, PlayerProfile, RateLimitEvent, Team
@@ -76,7 +86,7 @@ class ScoreInputBoundsTests(TestCase):
         user = get_user_model().objects.create_user("score-bounds-player")
         team_a = Team.objects.create(name="Score Bounds A", division=Team.DIVISION_MENS)
         team_b = Team.objects.create(name="Score Bounds B", division=Team.DIVISION_MENS)
-        profile = PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE, team=team_a)
+        profile = PlayerProfile.objects.create(user=user, gender=PlayerProfile.GENDER_MALE)
         match = Match.objects.create(
             team_a=team_a,
             team_b=team_b,
@@ -142,3 +152,131 @@ class BruteForceProtectionTests(TestCase):
         self.assertFalse(RateLimitEvent.objects.filter(pk=old.pk).exists())
         self.assertTrue(RateLimitEvent.objects.filter(pk=current.pk).exists())
         self.assertIn("Deleted 1", output.getvalue())
+
+
+@override_settings(ALLOWED_HOSTS=["ladder.example.com"])
+class BootstrapAdminCommandTests(TestCase):
+    def setUp(self):
+        self.environment = {
+            "DJANGO_BOOTSTRAP_ADMIN_USERNAME": "first-admin",
+            "DJANGO_BOOTSTRAP_ADMIN_EMAIL": "admin@example.com",
+        }
+
+    def test_command_creates_unusable_superuser_and_sends_valid_reset_link(self):
+        output = StringIO()
+
+        with unittest.mock.patch.dict(os.environ, self.environment, clear=False):
+            call_command("bootstrap_admin", stdout=output)
+
+        user = get_user_model().objects.get(username="first-admin")
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_active)
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["admin@example.com"])
+        match = re.search(r"/accounts/reset/(?P<uid>[^/]+)/(?P<token>[^/]+)/", mail.outbox[0].body)
+        self.assertIsNotNone(match)
+        self.assertEqual(force_str(urlsafe_base64_decode(match.group("uid"))), str(user.pk))
+        self.assertTrue(default_token_generator.check_token(user, match.group("token")))
+        self.assertIn("Administrator provisioned", output.getvalue())
+
+    def test_command_is_idempotent_after_first_superuser(self):
+        with unittest.mock.patch.dict(os.environ, self.environment, clear=False):
+            call_command("bootstrap_admin", stdout=StringIO())
+            mail.outbox.clear()
+            output = StringIO()
+            call_command("bootstrap_admin", stdout=output)
+
+        self.assertEqual(get_user_model().objects.filter(is_superuser=True).count(), 1)
+        self.assertEqual(mail.outbox, [])
+        self.assertIn("already provisioned", output.getvalue())
+
+    def test_command_requires_environment_when_no_superuser_exists(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DJANGO_BOOTSTRAP_ADMIN_USERNAME", None)
+            os.environ.pop("DJANGO_BOOTSTRAP_ADMIN_EMAIL", None)
+            with self.assertRaisesMessage(CommandError, "username and email are required"):
+                call_command("bootstrap_admin")
+
+    def test_email_failure_rolls_back_new_administrator(self):
+        with (
+            unittest.mock.patch.dict(os.environ, self.environment, clear=False),
+            unittest.mock.patch("ladder.services.send_mail", side_effect=OSError("SMTP unavailable")),
+            self.assertRaisesMessage(CommandError, "email could not be sent"),
+        ):
+            call_command("bootstrap_admin")
+
+        self.assertFalse(get_user_model().objects.filter(is_superuser=True).exists())
+
+
+class ReadinessCheckTests(TestCase):
+    def test_readiness_is_public_queries_database_and_is_not_cached(self):
+        response = self.client.get("/health/ready/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+    def test_readiness_returns_degraded_when_database_query_fails(self):
+        with unittest.mock.patch("config.views.connection.cursor", side_effect=DatabaseError("database unavailable")):
+            response = self.client.get("/health/ready/")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "degraded"})
+        self.assertEqual(response["Cache-Control"], "no-store")
+
+
+class OperationsScheduleConfigurationTests(SimpleTestCase):
+    def test_render_blueprint_declares_required_cron_jobs(self):
+        blueprint = (Path(__file__).resolve().parent.parent / "render.yaml").read_text(encoding="utf-8")
+
+        self.assertEqual(blueprint.count("  - type: cron"), 4)
+        for schedule, command in (
+            ('schedule: "* * * * *"', "startCommand: python manage.py send_notification_emails --retry-failed"),
+            ('schedule: "*/5 * * * *"', "startCommand: python manage.py expire_suggestions"),
+            ('schedule: "0 2 * * *"', "startCommand: python manage.py audit_data_integrity"),
+            ('schedule: "30 2 * * *"', "startCommand: python manage.py purge_rate_limit_events"),
+        ):
+            with self.subTest(command=command):
+                self.assertIn(schedule, blueprint)
+                self.assertIn(command, blueprint)
+
+
+class SentryConfigurationTests(SimpleTestCase):
+    def test_unset_dsn_does_not_initialize_sdk(self):
+        with unittest.mock.patch("sentry_sdk.init") as init:
+            enabled = initialize_sentry("")
+
+        self.assertFalse(enabled)
+        init.assert_not_called()
+
+    def test_configured_dsn_disables_default_pii_and_installs_scrubber(self):
+        with unittest.mock.patch("sentry_sdk.init") as init:
+            enabled = initialize_sentry("https://public@example.invalid/1")
+
+        self.assertTrue(enabled)
+        options = init.call_args.kwargs
+        self.assertFalse(options["send_default_pii"])
+        self.assertIs(options["before_send"], scrub_sentry_event)
+        self.assertEqual(options["dsn"], "https://public@example.invalid/1")
+        self.assertEqual(options["integrations"][0].__class__.__name__, "DjangoIntegration")
+
+    def test_scrubber_filters_identity_and_credential_fields_recursively(self):
+        event = {
+            "request": {
+                "headers": {"Authorization": "Bearer secret", "Cookie": "session=secret", "Accept": "text/html"},
+                "data": {"email": "player@example.com", "new_password": "secret", "team_id": 9},
+            },
+            "extra": [{"recipient_email": "other@example.com"}],
+        }
+
+        scrubbed = scrub_sentry_event(event)
+
+        self.assertEqual(scrubbed["request"]["headers"]["Authorization"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["headers"]["Cookie"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["data"]["email"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["data"]["new_password"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["extra"][0]["recipient_email"], FILTERED_VALUE)
+        self.assertEqual(scrubbed["request"]["headers"]["Accept"], "text/html")
+        self.assertEqual(scrubbed["request"]["data"]["team_id"], 9)

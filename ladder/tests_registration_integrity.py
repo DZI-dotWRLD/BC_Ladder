@@ -7,6 +7,7 @@ from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
 
+from axes.models import AccessLog
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.core import mail
@@ -15,7 +16,6 @@ from django.db import IntegrityError, close_old_connections, connection, transac
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
-from axes.models import AccessLog
 
 from ladder.forms import PlayerRegistrationForm
 from ladder.models import EmailNotificationDelivery, InviteCode, PlayerProfile, WorkflowEvent

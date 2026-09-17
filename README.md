@@ -147,7 +147,10 @@ DJANGO_EMAIL_HOST_USER
 DJANGO_EMAIL_HOST_PASSWORD
 DJANGO_EMAIL_USE_TLS=true
 DJANGO_DEFAULT_FROM_EMAIL
+DJANGO_BOOTSTRAP_ADMIN_USERNAME
+DJANGO_BOOTSTRAP_ADMIN_EMAIL
 DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
+SENTRY_DSN
 ```
 
 Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
@@ -158,6 +161,9 @@ the managed PostgreSQL service and `RENDER_EXTERNAL_HOSTNAME` for the default
 For the Render Free trial, `build.sh` runs migrations during the build because
 Free web services do not provide Shell/pre-deploy access. Move migrations to a
 controlled release step before production.
+The release build runs `bootstrap_admin` after migrations. On the first release,
+the configured bootstrap administrator receives a one-time link for setting a
+password; later releases detect the existing superuser and exit successfully.
 
 Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
 When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local
@@ -177,6 +183,9 @@ default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
 Notification outbox delivery defaults to `inline` with DEBUG or during tests
 and to `scheduled` otherwise. A production scheduler must run
 `python manage.py send_notification_emails --retry-failed` every minute.
+Error tracking is disabled when `SENTRY_DSN` is unset. When configured, Sentry
+uses its Django integration with default PII collection disabled and filters
+email, password, authorization, and cookie fields before sending events.
 
 ## Current Limitations
 
