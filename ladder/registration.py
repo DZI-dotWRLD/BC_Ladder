@@ -1,4 +1,4 @@
-"""Atomic invited account creation and database-normalized email identity."""
+"""Atomic account creation and database-normalized email identity."""
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
@@ -7,11 +7,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Value
 from django.db.models.functions import Lower, NullIf, Trim
 from django.urls import reverse
-from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
-from .models import InviteCode, PlayerProfile
+from .models import PlayerProfile
 from .services import DomainError
 
 EMAIL_CONFLICT = "An account with this email address already exists."
@@ -46,23 +45,10 @@ def register_player(form):
     """A valid public form may still lose an insert race; roll back completely."""
     try:
         with transaction.atomic():
-            try:
-                invite = InviteCode.objects.select_for_update().get(code=form.cleaned_data["invite_code"])
-            except InviteCode.DoesNotExist:
-                raise RegistrationConflict("invite_code", "Enter a valid invite code.") from None
-            now = timezone.now()
-            if invite.revoked_at is not None:
-                raise RegistrationConflict("invite_code", "This invite code has been revoked.")
-            if invite.expires_at is not None and invite.expires_at <= now:
-                raise RegistrationConflict("invite_code", "This invite code has expired.")
-            if invite.uses >= invite.max_uses:
-                raise RegistrationConflict("invite_code", "This invite code has already been used.")
             user = form.save(commit=False)
             user.is_active = False
             user.save()
             PlayerProfile.objects.create(user=user, gender=form.cleaned_data["gender"])
-            invite.uses += 1
-            invite.save(update_fields=["uses"])
         return user
     except IntegrityError:
         # Query only after the failed transaction/savepoint has rolled back.

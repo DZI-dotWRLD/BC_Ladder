@@ -22,7 +22,7 @@ This document describes the implementation, not a replacement policy.
 | `ladder/services.py` | Authorized transactional mutations, matchmaking, booking, scoring, and standings. |
 | `ladder/forms.py` | Request input shape and user-facing validation. |
 | `ladder/views.py`, `ladder/urls.py` | Authentication, object authorization, service orchestration, and HTTP responses. |
-| `ladder/registration.py` | Invite-gated registration and email-verification tokens. |
+| `ladder/registration.py` | Atomic self-registration, normalized email identity, and email-verification tokens. |
 | `ladder/workflow_events.py` | Append-only workflow-event creation and recipient snapshots. |
 | `ladder/email_notifications.py` | Transactional email outbox queuing, claiming, rendering, and delivery. |
 | `ladder/admin.py` | Operational administration with history and domain-invariant safeguards. |
@@ -40,7 +40,6 @@ The `ladder` app owns these models:
 
 | Model | Purpose and important states |
 | --- | --- |
-| `InviteCode` | Controlled registration token with creator, expiry/revocation, maximum uses, and locked usage count. |
 | `RateLimitEvent` | Opaque DB-backed timestamped event used for recovery and verification throttles. |
 | `Team` | Ladder team in `mens` or `womens`; status is `active` or `retired`. |
 | `PlayerProfile` | One-to-one user extension containing the player's ladder gender. Its active team is derived only from memberships. |
@@ -243,7 +242,6 @@ messages are recovery-class email and intentionally bypass the workflow outbox.
 | `audit_data_integrity [--fail-level error|warning]` | Read-only production integrity audit with a non-zero exit at the configured severity. |
 | `audit_user_emails` | Report duplicate normalized-email user IDs without logging addresses. |
 | `bootstrap_admin` | Idempotently provision the first superuser from environment variables and email a reset link. |
-| `create_invite_codes --count N [--max-uses M] [--expires-in-days D] [--created-by USER]` | Generate controlled registration codes. |
 | `expire_suggestions` | Mark overdue open suggestions expired. |
 | `purge_rate_limit_events` | Delete rate-limit events older than 24 hours. |
 | `reconcile_standings [--division mens|womens]` | Rebuild standings from confirmed history. |

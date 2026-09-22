@@ -11,7 +11,6 @@ from django.utils import timezone
 
 from .models import (
     AvailabilitySlot,
-    InviteCode,
     LadderStanding,
     Match,
     MatchParticipant,
@@ -67,10 +66,6 @@ class LegacyTeamBackfillMigrationTests(TransactionTestCase):
 
 class PhaseARequestTests(TestCase):
     club_tz = ZoneInfo("America/New_York")
-
-    def setUp(self):
-        inviter = get_user_model().objects.create_user(username="phase-a-invite-creator")
-        self.invite = InviteCode.objects.create(code="phase-a-invite", created_by=inviter, max_uses=10)
 
     def create_profile(self, username, gender=PlayerProfile.GENDER_MALE):
         user = get_user_model().objects.create_user(username=username, password="pass")
@@ -129,7 +124,6 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "new-register",
                 "email": "New.Player@Example.com",
-                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -152,7 +146,6 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "duplicate-email",
                 "email": "PLAYER@example.com",
-                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",
@@ -169,7 +162,6 @@ class PhaseARequestTests(TestCase):
             {
                 "username": "no-email-register",
                 "email": "not-an-email",
-                "invite_code": self.invite.code,
                 "gender": PlayerProfile.GENDER_FEMALE,
                 "password1": "StrongPass123!",
                 "password2": "StrongPass123!",

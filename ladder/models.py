@@ -11,31 +11,6 @@ class ActiveTeamManager(models.Manager):
         return super().get_queryset().filter(status=Team.STATUS_ACTIVE)
 
 
-class InviteCode(models.Model):
-    code = models.CharField(max_length=128, unique=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="created_invite_codes",
-    )
-    max_uses = models.PositiveIntegerField(default=1)
-    uses = models.PositiveIntegerField(default=0)
-    expires_at = models.DateTimeField(null=True, blank=True)
-    revoked_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [models.Index(fields=["expires_at"], name="invite_expiry_idx")]
-        constraints = [
-            models.CheckConstraint(condition=Q(max_uses__gte=1), name="invite_max_uses_positive"),
-            models.CheckConstraint(condition=Q(uses__gte=0), name="invite_uses_nonnegative"),
-            models.CheckConstraint(condition=Q(uses__lte=F("max_uses")), name="invite_uses_within_limit"),
-        ]
-
-    def __str__(self):
-        return self.code
-
-
 class RateLimitEvent(models.Model):
     key = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
