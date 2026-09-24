@@ -277,6 +277,18 @@ rendering. Each piece of information has exactly one home:
 | **Home** | `/` | Greeting, next match (or the single next setup step), standing, open match requests |
 | **Play** | `/availability/`, `/suggestions/`, `/matches/` | Three server routes behind one tab control (`partials/play_tabs.html`) |
 | **Ladder** | `/ladders/<division>/` | Standings with a division switch |
+
+Match lists and the next match:
+- **Home's next match** is the soonest scheduled match whose
+  `scheduled_ends_at` is still in the future. A match that has started but
+  not ended shows as "On court now". Past matches never appear there.
+- **Matches** (`_split_player_matches`) keeps a match in **Your matches**
+  while it is scheduled and the viewer's side has not submitted a score. The
+  viewer's side is the team they were selected for, or otherwise their
+  current team. These are ordered soonest first and capped at 30.
+- Everything else moves to a collapsed **Past matches** list, paginated 20
+  per page, newest first: the viewer's side has scored (waiting or conflict),
+  or the match is completed or cancelled. Nothing is deleted.
 | **Account menu** | `/team/`, logout | Team roster and join/create/leave; logout is a POST |
 
 The header is sticky, with the crest, the main navigation (a centered pill on

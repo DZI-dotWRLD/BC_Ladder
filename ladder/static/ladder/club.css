@@ -621,3 +621,9 @@ input[type="datetime-local"] { font-variant-numeric: lining-nums tabular-nums; }
     .match-hero .status-line { justify-content: flex-start; }
 }
 .preset, .day-chip { position: relative; }
+.past-matches { margin-top: var(--s6); }
+.past-matches > summary { font-family: var(--font-serif); font-size: 1.35rem; font-weight: 600; color: var(--ink); }
+.list-note { margin-top: var(--s3); }
+.match-card .badge-red.live { --dot: #ff9d94; color: #ffd6d1; }
+@media (prefers-reduced-motion: no-preference) { .badge.live::before { animation: live-pulse 1.6s ease-in-out infinite; } }
+@keyframes live-pulse { 50% { box-shadow: 0 0 0 5px rgb(255 157 148 / 0); opacity: .55; } }

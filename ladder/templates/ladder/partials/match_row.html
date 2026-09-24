@@ -1,0 +1,15 @@
+{% with match=card.match %}
+<li class="row{% if card.can_submit %} needs-score{% endif %}">
+    <time class="date-chip" datetime="{{ match.scheduled_starts_at|date:'c' }}"><span>{{ match.scheduled_starts_at|date:"D" }}</span><strong>{{ match.scheduled_starts_at|date:"M j" }}</strong></time>
+    <span class="row-body">
+        <a class="row-main" href="{% url 'ladder:match_detail' match.id %}"><strong>{{ match.team_a.name }} <span class="vs">vs</span> {{ match.team_b.name }}</strong><span class="visually-hidden">, {% if match.status == "scheduled" %}open scorecard{% else %}view match{% endif %}</span></a>
+        <span class="muted small">{{ match.scheduled_starts_at|date:"g:i A" }} · {{ card.state_note }}</span>
+    </span>
+    {% if card.can_submit %}
+        <a class="btn btn-primary btn-sm" href="{% url 'ladder:match_detail' match.id %}#score-submission">Enter score</a>
+    {% else %}
+        <span class="badge {% if match.status == 'completed' %}badge-clay{% elif match.status == 'cancelled' %}badge-muted{% else %}badge-ink{% endif %}">{{ match.get_status_display }}</span>
+        {% include "ladder/partials/icon.html" with name="chevron-right" %}
+    {% endif %}
+</li>
+{% endwith %}

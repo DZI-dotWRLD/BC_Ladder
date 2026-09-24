@@ -8,7 +8,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import PasswordResetView
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Case, Exists, F, IntegerField, OuterRef, Q, Subquery, Value, When
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
@@ -26,6 +27,8 @@ from .models import (
     AvailabilitySlot,
     LadderStanding,
     Match,
+    MatchParticipant,
+    MatchResultSubmission,
     MatchSuggestion,
     PlayerProfile,
     SuggestionParticipant,
@@ -115,6 +118,36 @@ def _player_match_queryset(profile):
         .distinct()
         .order_by("-scheduled_starts_at", "-scheduled_week_start_date", "-scheduled_start_time", "-id")
     )
+
+
+OPEN_MATCH_LIMIT = 30
+
+
+def _split_player_matches(profile):
+    """Split a player's matches into open ones and settled history.
+
+    A match stays open while it is scheduled and the viewer's side has not submitted a score. The
+    viewer's side is the team they played for, or their current team when they were not selected.
+    Everything else (own score submitted, completed, cancelled) is history; nothing is deleted.
+    """
+    team = _active_team(profile)
+    own_team_id = Coalesce(
+        Subquery(MatchParticipant.objects.filter(match=OuterRef("pk"), player=profile).values("team_id")[:1]),
+        Value(team.id if team else None, output_field=IntegerField()),
+        output_field=IntegerField(),
+    )
+    matches = (
+        _player_match_queryset(profile)
+        .annotate(own_team_id=own_team_id)
+        .annotate(
+            own_side_submitted=Exists(
+                MatchResultSubmission.objects.filter(match=OuterRef("pk"), submitting_team_id=OuterRef("own_team_id"))
+            )
+        )
+    )
+    open_filter = Q(status=Match.STATUS_SCHEDULED, own_side_submitted=False)
+    open_matches = matches.filter(open_filter).order_by(F("scheduled_starts_at").asc(nulls_last=True), "id")
+    return open_matches, matches.exclude(open_filter)
 
 
 def _participant_match_queryset(profile):
@@ -407,20 +440,14 @@ def dashboard(request):
     suggestions_qs = MatchSuggestion.objects.none()
     suggestion_count = 0
     matches_qs = _player_match_queryset(profile)
+    now = timezone.now()
+    # Only a match that has not finished yet is "next"; once it ends it belongs to Matches (to score) or history.
     next_match = (
-        matches_qs.filter(
-            status=Match.STATUS_SCHEDULED,
-            scheduled_starts_at__gte=timezone.now(),
-        )
+        matches_qs.filter(status=Match.STATUS_SCHEDULED, scheduled_starts_at__isnull=False, scheduled_ends_at__gt=now)
         .order_by("scheduled_starts_at", "id")
         .first()
     )
-    if next_match is None:
-        next_match = (
-            matches_qs.filter(status=Match.STATUS_SCHEDULED, scheduled_starts_at__isnull=False)
-            .order_by("scheduled_starts_at", "id")
-            .first()
-        )
+    next_match_in_progress = bool(next_match and next_match.scheduled_starts_at <= now)
     match_participants = sorted(
         next_match.participants.all() if next_match else [],
         key=lambda participant: (participant.side, participant.lineup_order, participant.id),
@@ -459,6 +486,7 @@ def dashboard(request):
             "availability": availability,
             "suggestions": suggestions_qs,
             "next_match": next_match,
+            "next_match_in_progress": next_match_in_progress,
             "next_match_team_a_players": team_a_players,
             "next_match_team_b_players": team_b_players,
             "standing": standing,
@@ -718,9 +746,20 @@ def match_history(request):
     profile = _profile_or_setup(request)
     if profile is None:
         return redirect("ladder:profile_setup")
-    page = Paginator(_player_match_queryset(profile), 20).get_page(request.GET.get("page"))
-    cards = [_match_presentation(match, profile) for match in page]
-    return render(request, "ladder/matches.html", {"matches": page, "match_cards": cards, "page_obj": page})
+    open_matches, history = _split_player_matches(profile)
+    open_list = list(open_matches[: OPEN_MATCH_LIMIT + 1])
+    page = Paginator(history, 20).get_page(request.GET.get("page"))
+    return render(
+        request,
+        "ladder/matches.html",
+        {
+            "open_cards": [_match_presentation(match, profile) for match in open_list[:OPEN_MATCH_LIMIT]],
+            "open_overflow": len(open_list) > OPEN_MATCH_LIMIT,
+            "matches": page,
+            "history_cards": [_match_presentation(match, profile) for match in page],
+            "page_obj": page,
+        },
+    )
 
 
 @login_required

@@ -16,7 +16,7 @@
         {% if next_match %}
             <header class="match-card-head">
                 <p class="eyebrow">Next match</p>
-                <span class="badge badge-clay">Confirmed</span>
+                {% if next_match_in_progress %}<span class="badge badge-red live">On court now</span>{% else %}<span class="badge badge-clay">Confirmed</span>{% endif %}
             </header>
             <h2 id="next-match-heading" class="match-date">{{ next_match.scheduled_starts_at|date:"l, F j" }}</h2>
             <p class="match-time">{% include "ladder/partials/icon.html" with name="clock" %}{{ next_match.scheduled_starts_at|date:"g:i A" }} – {{ next_match.scheduled_ends_at|date:"g:i A" }}</p>

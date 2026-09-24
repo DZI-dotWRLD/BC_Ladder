@@ -49,7 +49,9 @@ class FrontendHardeningTests(TestCase):
         self.assertNotContains(detail, 'id="score-submission"')
 
     def test_match_pagination_has_stable_tie_breaker_and_bounded_queries(self):
+        # Pagination applies to settled history; completed matches never sit in the open list.
         matches = [self.make_match() for _ in range(21)]
+        Match.objects.filter(pk__in=[match.pk for match in matches]).update(status=Match.STATUS_COMPLETED)
         with CaptureQueriesContext(connection) as queries:
             response = self.client.get(reverse("ladder:matches"))
         self.assertLessEqual(len(queries), 12)
