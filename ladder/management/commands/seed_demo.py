@@ -71,6 +71,7 @@ class Command(BaseCommand):
 
         pending = self._pending_suggestion(mens_teams[0])
         scheduled = self._confirmed_match(mens_teams[0])
+        played = self._played_match(mens_teams[0], mens_teams[1], mens_players[0:2], mens_players[2:4])
         completed = self._completed_match(mens_teams[2], mens_teams[3], mens_players[4:6], mens_players[6:8])
         self._refresh_standings(mens_teams)
         self._refresh_standings(womens_teams)
@@ -80,6 +81,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Player login example: demo-mens-1 / {DEMO_PASSWORD}")
         self.stdout.write(f"Pending suggestion: {pending.id if pending else 'not available'}")
         self.stdout.write(f"Scheduled match: {scheduled.id if scheduled else 'not available'}")
+        self.stdout.write(f"Played match awaiting scores: {played.id}")
         self.stdout.write(f"Completed match: {completed.id if completed else 'not available'}")
 
     def _user(self, username, is_staff=False, is_superuser=False):
@@ -228,8 +230,22 @@ class Command(BaseCommand):
         accept_suggestion(team_a_user, suggestion)
         return accept_suggestion(team_b_user, suggestion)
 
+    def _played_match(self, team_a, team_b, team_a_players, team_b_players):
+        # Scores open at the scheduled start, so the demo needs a match already played.
+        match = self._past_match(team_a, team_b, days_ago=1, hour=18)
+        self._ensure_match_participants(match, team_a_players, team_b_players)
+        return match
+
     def _completed_match(self, team_a, team_b, team_a_players, team_b_players):
-        starts_at, ends_at = self._window(days_from_now=3, hour=17)
+        match = self._past_match(team_a, team_b, days_ago=3, hour=17)
+        self._ensure_match_participants(match, team_a_players, team_b_players)
+        if match.status != Match.STATUS_COMPLETED:
+            submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
+            submit_match_result(team_b_players[0].user, match, [(6, 4), (6, 4)])
+        return match
+
+    def _past_match(self, team_a, team_b, days_ago, hour):
+        starts_at, ends_at = self._window(days_from_now=-days_ago, hour=hour)
         match, _ = Match.objects.get_or_create(
             team_a=team_a,
             team_b=team_b,
@@ -242,10 +258,6 @@ class Command(BaseCommand):
                 "scheduled_end_time": ends_at.time(),
             },
         )
-        self._ensure_match_participants(match, team_a_players, team_b_players)
-        if match.status != Match.STATUS_COMPLETED:
-            submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
-            submit_match_result(team_b_players[0].user, match, [(6, 4), (6, 4)])
         return match
 
     def _ensure_match_participants(self, match, team_a_players, team_b_players):

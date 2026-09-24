@@ -82,7 +82,9 @@ try {
         await page.locator('.match-card').getByRole('link', { name: 'View match' }).click();
         await page.locator('.scorecard-page').waitFor();
         await layout('scorecard', width);
-        assert.equal(await page.locator('#score-submission form input[name=csrfmiddlewaretoken]').count(), 1);
+        // Home's next match is still upcoming, so its scorecard waits for the start time.
+        assert.equal(await page.locator('#score-submission').count(), 0);
+        await page.getByText('Scoring opens when the match starts.', { exact: true }).waitFor();
 
         // Play is three real routes behind one tab control; nothing is composed client-side.
         await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Play', exact: true }).click();
@@ -100,6 +102,7 @@ try {
         await layout('matches', width);
         await page.getByRole('link', { name: 'Enter score', exact: true }).first().click();
         await page.locator('#score-submission').waitFor();
+        assert.equal(await page.locator('#score-submission form input[name=csrfmiddlewaretoken]').count(), 1);
 
         await visit('/ladders/mens/');
         for (const division of ['mens', 'womens']) {

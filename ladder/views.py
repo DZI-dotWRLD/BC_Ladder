@@ -170,7 +170,8 @@ def _match_presentation(match, profile):
         or (("legacy", submission.team_a_sets_won, submission.team_b_sets_won),)
         for submission in submissions
     ]
-    can_submit = bool(own_participant and match.status == Match.STATUS_SCHEDULED and not own_submission)
+    started = match.has_started()
+    can_submit = bool(own_participant and match.status == Match.STATUS_SCHEDULED and not own_submission and started)
     if match.status == Match.STATUS_CANCELLED:
         note = "Cancelled — this booking remains in history."
     elif official:
@@ -181,6 +182,8 @@ def _match_presentation(match, profile):
         note = "Read-only: only selected match players can submit scores."
     elif own_submission:
         note = "Your team submitted its score. Waiting for the opponent."
+    elif not started:
+        note = "Scoring opens when the match starts."
     elif submissions:
         note = "Opponent score received. Your team needs to submit its score."
     else:

@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection
+from django.db.models import F
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -257,6 +258,11 @@ class PhaseA5OperationsTests(TestCase):
         self.assertEqual(set(confirmed_event.recipients.values_list("user_id", flat=True)), participant_user_ids)
         self.assertEqual(WorkflowEvent.objects.filter(event_type=WorkflowEvent.EventType.MATCH_CONFIRMED).count(), 1)
 
+        # Scores open at the scheduled start, so play the booked match before scoring it.
+        Match.objects.filter(pk=match.pk).update(
+            scheduled_starts_at=F("scheduled_starts_at") - timedelta(days=730),
+            scheduled_ends_at=F("scheduled_ends_at") - timedelta(days=730),
+        )
         first_submission = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
         repeated_submission = submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])
 
@@ -349,12 +355,12 @@ class PhaseA5OperationsTests(TestCase):
         match = Match.objects.create(
             team_a=team_a,
             team_b=team_b,
-            scheduled_week_start_date=date(2027, 8, 23),
+            scheduled_week_start_date=date(2026, 8, 24),
             scheduled_day_of_week=AvailabilitySlot.DayOfWeek.MONDAY,
             scheduled_start_time=time(18, 0),
             scheduled_end_time=time(20, 0),
-            scheduled_starts_at=self.make_dt(2027, 8, 23, 18),
-            scheduled_ends_at=self.make_dt(2027, 8, 23, 20),
+            scheduled_starts_at=self.make_dt(2026, 8, 24, 18),
+            scheduled_ends_at=self.make_dt(2026, 8, 24, 20),
         )
         self.add_match_participants(match, team_a_players, team_b_players)
         submit_match_result(team_a_players[0].user, match, [(6, 4), (6, 4)])

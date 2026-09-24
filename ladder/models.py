@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F, Q
+from django.utils import timezone
 
 
 class ActiveTeamManager(models.Manager):
@@ -384,6 +385,10 @@ class Match(models.Model):
             raise ValidationError("Scheduled start time must be before scheduled end time.")
         if self.scheduled_starts_at and self.scheduled_ends_at and self.scheduled_starts_at >= self.scheduled_ends_at:
             raise ValidationError("Scheduled start must be before scheduled end.")
+
+    def has_started(self, now=None):
+        """Scores open at the scheduled start; legacy matches without one stay open."""
+        return self.scheduled_starts_at is None or self.scheduled_starts_at <= (now or timezone.now())
 
     def __str__(self):
         return (

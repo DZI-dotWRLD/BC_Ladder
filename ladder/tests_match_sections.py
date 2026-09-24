@@ -6,6 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .models import Match, MatchParticipant, MatchResultSubmission, PlayerProfile, Team, TeamMembership
+from .services import StaleState, submit_match_result
 
 
 class MatchSectionTests(TestCase):
@@ -80,6 +81,47 @@ class MatchSectionTests(TestCase):
         response, open_ids, _history = self.sections()
         self.assertEqual(open_ids, [])
         self.assertContains(response, "No upcoming matches.")
+
+
+class ScoreOpensAtStartTests(TestCase):
+    """Scores can be entered only once a match has started; legacy matches without a start stay open."""
+
+    setUp = MatchSectionTests.setUp
+    make_match = MatchSectionTests.make_match
+    sections = MatchSectionTests.sections
+
+    def test_future_match_offers_no_score_entry(self):
+        upcoming = self.make_match(timedelta(days=7))
+        response, open_ids, _history = self.sections()
+        self.assertEqual(open_ids, [upcoming.id])
+        self.assertNotContains(response, "Enter score")
+        self.assertContains(response, "Scoring opens when the match starts.")
+        detail = self.client.get(reverse("ladder:match_detail", args=[upcoming.id]))
+        self.assertNotContains(detail, 'id="score-submission"')
+
+    def test_started_match_offers_score_entry(self):
+        playing = self.make_match(-timedelta(minutes=5))
+        response = self.client.get(reverse("ladder:matches"))
+        self.assertContains(response, f"{reverse('ladder:match_detail', args=[playing.id])}#score-submission")
+
+    def test_service_and_view_reject_early_scores(self):
+        upcoming = self.make_match(timedelta(days=7))
+        with self.assertRaisesMessage(StaleState, "Scores open when the match starts."):
+            submit_match_result(self.player.user, upcoming, [(6, 4), (6, 4)])
+        response = self.client.post(
+            reverse("ladder:submit_score", args=[upcoming.id]),
+            {"set1_team_a": "6", "set1_team_b": "4", "set2_team_a": "6", "set2_team_b": "4"},
+            follow=True,
+        )
+        self.assertContains(response, "Scores open when the match starts.")
+        self.assertFalse(MatchResultSubmission.objects.filter(match=upcoming).exists())
+
+    def test_legacy_match_without_start_accepts_scores(self):
+        legacy = self.make_match(timedelta(days=7))
+        Match.objects.filter(pk=legacy.pk).update(scheduled_starts_at=None, scheduled_ends_at=None)
+        legacy.refresh_from_db()
+        submission = submit_match_result(self.player.user, legacy, [(6, 4), (6, 4)])
+        self.assertEqual(submission.submitting_team, self.team)
 
 
 class NextMatchTests(TestCase):

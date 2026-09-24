@@ -1545,6 +1545,8 @@ def submit_match_result(actor, match, normalized_sets):
         locked_match = Match.objects.select_for_update(of=("self",)).select_related("team_a", "team_b").get(pk=match.pk)
         if locked_match.status != Match.STATUS_SCHEDULED:
             raise StaleState("Only scheduled matches can receive scores.")
+        if not locked_match.has_started():
+            raise StaleState("Scores open when the match starts.")
         submitting_team = _match_team_for_participant(locked_match, actor_profile)
         if submitting_team is None:
             raise AuthorizationFailure("Only selected match participants may submit a result.")

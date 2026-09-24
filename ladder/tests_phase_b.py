@@ -527,7 +527,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         team_b, team_b_players = self.create_team_with_members("pg-submit-b", 2)
         LadderStanding.objects.create(team=team_a, position=1)
         LadderStanding.objects.create(team=team_b, position=2)
-        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 14, 18), self.make_dt(2027, 9, 14, 20))
+        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2025, 9, 14, 18), self.make_dt(2025, 9, 14, 20))
         self.add_match_participants(match, team_a_players, team_b_players)
 
         results = self.run_concurrently(
@@ -561,7 +561,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         team_b, team_b_players = self.create_team_with_members("pg-conflict-b", 2)
         LadderStanding.objects.create(team=team_a, position=1)
         LadderStanding.objects.create(team=team_b, position=2)
-        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 15, 18), self.make_dt(2027, 9, 15, 20))
+        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2025, 9, 15, 18), self.make_dt(2025, 9, 15, 20))
         self.add_match_participants(match, team_a_players, team_b_players)
 
         results = self.run_concurrently(
@@ -595,7 +595,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         team_b, team_b_players = self.create_team_with_members("pg-score-dup-b", 2)
         LadderStanding.objects.create(team=team_a, position=1)
         LadderStanding.objects.create(team=team_b, position=2)
-        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 16, 18), self.make_dt(2027, 9, 16, 20))
+        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2025, 9, 16, 18), self.make_dt(2025, 9, 16, 20))
         self.add_match_participants(match, team_a_players, team_b_players)
 
         results = self.run_concurrently(
@@ -657,7 +657,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
     def test_score_submission_and_cancellation_serialize_to_one_outcome(self):
         team_a, team_a_players = self.create_team_with_members("pg-cancel-score-a", 2)
         team_b, team_b_players = self.create_team_with_members("pg-cancel-score-b", 2)
-        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2027, 9, 21, 18), self.make_dt(2027, 9, 21, 20))
+        match = self.create_scheduled_match(team_a, team_b, self.make_dt(2025, 9, 21, 18), self.make_dt(2025, 9, 21, 20))
         self.add_match_participants(match, team_a_players, team_b_players)
 
         results = self.run_concurrently(

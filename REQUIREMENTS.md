@@ -106,6 +106,9 @@ Men's and Women's Doubles ladders.
   Preserve the implementation's regular-set and 6-6 policy unless explicitly
   changed. Current policy: a regular set is valid only as 6-0 to 6-4, 7-5 or
   7-6. 6-5, 6-6 and 8-x are rejected. Tie-break scores are capped at 99.
+- Scores can be submitted only once the match's scheduled start has passed.
+  The server rejects earlier submissions. Legacy matches without a stored
+  start time stay open.
 - Validate scores on the server. Score submission, official result selection,
   ladder updates, and point-ledger writes are atomic and idempotent.
 - Do not update points until the submitted score is valid and the configured

@@ -277,6 +277,7 @@ rendering. Each piece of information has exactly one home:
 | **Home** | `/` | Greeting, next match (or the single next setup step), standing, open match requests |
 | **Play** | `/availability/`, `/suggestions/`, `/matches/` | Three server routes behind one tab control (`partials/play_tabs.html`) |
 | **Ladder** | `/ladders/<division>/` | Standings with a division switch |
+| **Account menu** | `/team/`, logout | Team roster and join/create/leave; logout is a POST |
 
 Match lists and the next match:
 - **Home's next match** is the soonest scheduled match whose
@@ -289,7 +290,10 @@ Match lists and the next match:
 - Everything else moves to a collapsed **Past matches** list, paginated 20
   per page, newest first: the viewer's side has scored (waiting or conflict),
   or the match is completed or cancelled. Nothing is deleted.
-| **Account menu** | `/team/`, logout | Team roster and join/create/leave; logout is a POST |
+- **Scores open at the scheduled start** (`Match.has_started`). Before then
+  an upcoming match shows "Scoring opens when the match starts." with no
+  score form, and `submit_match_result` raises `StaleState`. Legacy matches
+  with no `scheduled_starts_at` stay open.
 
 The header is sticky, with the crest, the main navigation (a centered pill on
 desktop, a fixed bottom tab bar under 48rem) and the account menu. Shared
