@@ -20,6 +20,5 @@ dependencies when available; otherwise start the child body with
 | Human action or decision required | `ready-for-human` |
 | Intentionally declined | `wontfix` |
 
-Matt Pocock wayfinding work may additionally use `wayfinder:map`,
-`wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, and
-`wayfinder:task` when those labels exist.
+If the `gh` CLI is not installed, say so and ask the owner to perform the
+GitHub step rather than guessing its outcome.

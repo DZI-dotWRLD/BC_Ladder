@@ -1,6 +1,6 @@
 ---
 name: availability-matchmaking
-description: Design, implement, debug, or review BC_ladder weekly availability, two-player lineup generation, opponent suggestions, dual-team acceptance, and concurrency-safe slot reservation.
+description: Design, implement, debug, or review BC_ladder interval availability, two-player lineup generation, opponent suggestions, dual-team acceptance, and concurrency-safe slot reservation.
 ---
 
 # Availability and Matchmaking Workflow
@@ -20,19 +20,31 @@ opponent suggestions, acceptance, booking, or match conflicts.
 - A third team member who is not selected remains available.
 - Confirmation is atomic, idempotent, and safe under concurrent requests.
 
-## Model the time representation first
+## The implemented model (read before changing it)
 
-Inspect the existing implementation and determine whether availability uses:
+- **Time model:** `AvailabilitySlot` stores **arbitrary timezone-aware
+  intervals** in UTC, not fixed weekly slots. Windows start and end on the same
+  club-local day (`DJANGO_TIME_ZONE`), and ambiguous or nonexistent DST local
+  times are rejected (`save_availability`, `_make_aware`). Active windows for
+  one player cannot overlap: the service checks this, and on PostgreSQL the
+  exclusion constraint from migration `0012` enforces it.
+- **Statuses:** slots are `active`, `consumed` or `cancelled`. Suggestions are
+  `proposed`, `partially_accepted`, `confirmed` or `expired`; `declined` and
+  `cancelled` exist but no service writes them. Matches are `scheduled`,
+  `completed` or `cancelled`. Reservations are `active` or `released`.
+- **Code:** `generate_team_lineups`, `find_opponent_suggestions`,
+  `_matchmaking_snapshot`, `sign_candidate`,
+  `create_match_suggestion_from_candidate`, `accept_suggestion` and
+  `cancel_match` in `ladder/services.py`.
+- **Contracts:** [docs/matchmaking-candidates.md](../../../docs/matchmaking-candidates.md)
+  defines the search algorithm, the 30-day horizon, the top-ten slice and the
+  signed 30-minute command.
+  [docs/booking-concurrency.md](../../../docs/booking-concurrency.md) defines
+  the mandatory lock order. Follow it exactly.
+- **Ranking:** points distance, then start time, opponent team, players, end
+  time and source-window IDs. Suggestions expire at their start time.
 
-- fixed weekly slot identifiers; or
-- arbitrary datetime intervals.
-
-Do not mix the two models accidentally.
-
-For fixed slots, prefer a normalized slot key such as weekday plus start/end
-time and timezone policy. For intervals, store timezone-aware bounds and use
-sorted interval logic. When PostgreSQL range types are already used, consider
-database exclusion constraints for overlap protection.
+The generic guidance below applies to new work within this model.
 
 ## Generate team lineups
 
@@ -86,25 +98,23 @@ the number of availability candidates plus the eligible matches inspected.
 
 ## Suggestion lifecycle
 
-Use explicit statuses that match the repository, for example:
+Use the repository's statuses (listed above). A confirmed suggestion stays
+`confirmed` as evidence of the match it produced, even after that match
+completes or is cancelled.
 
-- proposed;
-- partially accepted;
-- confirmed;
-- declined;
-- expired;
-- cancelled; and
-- completed.
-
-A suggestion must retain enough information to detect staleness, such as the
-chosen members, slot, teams, and version or timestamps of relevant
-availability.
+Staleness is detected by re-reading, under the suggestion lock, the immutable
+`SuggestionParticipant` rows, the current memberships, and the source
+availability rows. The suggestion version field was removed in migration
+`0020`, so don't add optimistic versioning back without an approved reason.
 
 Do not auto-confirm based on old acceptance after the lineup or slot changes.
 
 ## Confirmation transaction
 
-Inside one `transaction.atomic()` block:
+The implementation is `_confirm_suggestion_locked`. Lock order is profiles,
+then teams, then the suggestion, then availability, then reservations, each
+by ascending primary key, as `booking-concurrency.md` specifies. Inside one
+`transaction.atomic()` block:
 
 1. Lock the suggestion or match row.
 2. Lock all four users' relevant availability/reservation rows.

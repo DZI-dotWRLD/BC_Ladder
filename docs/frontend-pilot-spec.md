@@ -1,6 +1,47 @@
 # Frontend Pilot Specification
 
-Status: approved Phase B1 implementation contract, 2026-08-22.
+Status: approved Phase B1 implementation contract, 2026-08-22. The frontend
+was rebuilt in PR #11 and redesigned again on `agent/club-redesign`
+(2026-09-24). The contract still governs UI work, with these owner-directed
+changes:
+
+- **Visual direction.** The identity is a harbor club with a Long Island
+  old-money feel: ivory paper, black ink, club red for primary actions, and
+  green clay as a quiet accent for success and "open" states. Headings use
+  Cormorant Garamond and body text uses Inter, both self-hosted.
+- **No repetition.** Every fact and feature has exactly one home. Home shows
+  only the next match, standing and open requests. There is no setup
+  checklist ("Start here" was removed at the owner's request) and there are
+  no shortcut grids.
+- **Structure.** Navigation is **Home / Play / Ladder**, plus an account menu
+  for Team and Log out. Play is three real routes behind a tab control;
+  nothing is composed client-side. See
+  [architecture.md](architecture.md#frontend-composition).
+- **Instructions stay hidden until needed.** They live in `?` help
+  disclosures, and field help appears when the field is focused.
+- **Motion.**
+  - page view transitions;
+  - cards and list rows that rise into place as they scroll into view;
+  - Home standing numbers that count up;
+  - a gentle parallax on the match-card photo;
+  - click ripples, and a check that draws itself in success toasts.
+
+  All of it is disabled under reduced motion, and nothing is hidden without
+  JavaScript.
+- **Imagery.** Pages carry no photo banners (the owner reviewed them and
+  preferred clean headings). Only two photos are used:
+  - an aerial club-court photo behind the next-match cards on Home and the
+    match page, tinted green so the text stays readable;
+  - a harbor photo on the sign-in pages.
+
+  Both are decorative, Unsplash-licensed, and credited in
+  `ladder/static/ladder/images/ATTRIBUTION.md`.
+- **React was considered and rejected.** The server-rendered templates already
+  own authorization and validation, and a SPA would need a parallel JSON API
+  and a build pipeline without improving the experience. The redesign uses
+  native HTML, modern CSS (view transitions, `:has()`, container queries) and
+  a small script instead.
+- **npm** is used only by the Playwright smoke tests in `tests/frontend/`.
 
 ## Outcome
 
@@ -62,13 +103,13 @@ changing their domain meaning.
 
 | Surface | States |
 | --- | --- |
-| Authentication | register, login, invalid form, authenticated redirect |
+| Authentication | register, verification sent/resend/invalid link, login, lockout, password reset, invalid form, authenticated redirect |
 | Profile | missing profile, completed profile |
 | Dashboard | incomplete setup, pending team request, ready player, empty and populated summaries |
 | Team | no team, join request pending, active team, full team, removal pending |
 | Availability | empty, active windows, validation error, domain overlap error, cancelled history count |
 | Suggestions | no team, too few members, no availability, no shared lineup, no opponent, no opponent overlap, available option |
-| Acceptance | proposed, partially accepted, own team accepted, opponent accepted, non-selected teammate, stale version, confirmed, declined, expired, cancelled |
+| Acceptance | proposed, partially accepted, own team accepted, opponent accepted, non-selected teammate, stale (membership/availability changed), confirmed, expired, cancelled (demo data only), declined (no service writes it yet) |
 | Matches | empty, scheduled, score action needed, waiting for opponent score, conflict, completed, cancelled, historical participant access |
 | Cancellation | allowed confirmation, no longer allowed, successful cancellation |
 | Standings | empty and populated Men's or Women's ladder |
@@ -87,8 +128,9 @@ spacing, width, borders, radii, elevation, focus, motion, and breakpoints.
 - Use a consistent spacing scale and restrained elevation; dense data should
   rely on hierarchy and dividers rather than many independent shadows.
 - Use status labels with player-facing copy, not raw model or service values.
-- Do not introduce decorative images, fake icons, or animation that is needed
-  to understand state.
+- Do not introduce fake icons, or images or animation that are needed to
+  understand state. The licensed atmosphere photographs noted above are the
+  approved exception.
 
 ## Shared shell and components
 

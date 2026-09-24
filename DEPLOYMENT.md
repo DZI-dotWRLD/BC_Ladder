@@ -1,7 +1,9 @@
 # BC_ladder Deployment Runbook
 
 This runbook is the production checklist for a PostgreSQL-backed deployment.
-SQLite remains a local-development database only.
+SQLite remains a local-development database only. For what still blocks a
+launch with real club data, see
+[docs/production-readiness.md](docs/production-readiness.md).
 
 ## Required environment
 
@@ -89,7 +91,9 @@ one-minute schedule as a release blocker. The command also recovers expired `sen
 claims, even without retry flags; no separate worker dependency is required.
 Claims last at least five minutes (or three times `EMAIL_TIMEOUT`, whichever is
 longer; configure via `DJANGO_EMAIL_TIMEOUT`), and only one message is claimed
-at a time. SMTP runs without an open
+at a time. With `--retry-failed`, a failed row is retried on every run. There
+is no attempt cap or backoff, so watch `attempts` in admin and fix or skip
+addresses that fail permanently before they exhaust the SMTP quota. SMTP runs without an open
 database transaction or row lock; token-checked completion cannot overwrite a
 newer worker's claim. Attempts count claims, including interrupted attempts.
 
@@ -106,24 +110,25 @@ and recipient-user snapshots remain historical; retries read the user's current
 email address so administrator corrections take effect. Never place provider
 credentials or recipient addresses in logs or workflow metadata.
 
-Deploy this schema migration before the new worker code. Do not roll back to
-the old transaction-held SMTP sender while new workers have live claims; pause
-delivery and resolve claims first. Rows skipped because a user has no valid email address
-require correcting the user's email, then running:
+Rows skipped because a user has no valid email address require correcting the
+user's email, then running:
 
 ```powershell
 .\venv\Scripts\python.exe manage.py send_notification_emails --retry-skipped
 ```
 
 If the app is behind a trusted proxy or load balancer that terminates TLS, also
-set both proxy variables:
+set both proxy variables. Render terminates TLS at its proxy, and
+`render.yaml` does **not** set them yet. With `DJANGO_SECURE_SSL_REDIRECT=true`,
+expect an HTTPS redirect loop until you add them. Verify on the first deploy:
 
 ```text
 DJANGO_SECURE_PROXY_SSL_HEADER_NAME=HTTP_X_FORWARDED_PROTO
 DJANGO_SECURE_PROXY_SSL_HEADER_VALUE=https
 ```
 
-Start HSTS conservatively after HTTPS is verified end to end:
+Start HSTS conservatively after HTTPS is verified end to end. Note that
+`render.yaml` already sets the 300-second value below on the web service:
 
 ```text
 DJANGO_SECURE_HSTS_SECONDS=300
@@ -138,6 +143,7 @@ Run from the application checkout:
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe manage.py audit_user_emails   # only when upgrading a database created before migration 0016
 .\venv\Scripts\python.exe manage.py migrate
 .\venv\Scripts\python.exe manage.py bootstrap_admin
 .\venv\Scripts\python.exe manage.py audit_data_integrity
@@ -164,9 +170,25 @@ Render PostgreSQL databases expire after 30 days, have a 1 GB limit, and do not
 include backups. Upgrade the database before storing real club data.
 
 Because Render Shell and pre-deploy commands are not available on Free web
-services, `build.sh` runs `migrate --noinput` and `audit_data_integrity` during
-the free trial build. Remove that trial-only migration step before production
-and move migrations to a controlled release/pre-deploy process.
+services, `build.sh` does all of the release work during the build. In order,
+it runs a pip upgrade, `pip install -r requirements.txt`,
+`migrate --noinput`, `bootstrap_admin`, `audit_data_integrity`, then
+`collectstatic --noinput`, and it stops on the first failure. Consequences:
+
+- **The first build fails** unless `DJANGO_BOOTSTRAP_ADMIN_USERNAME`,
+  `DJANGO_BOOTSTRAP_ADMIN_EMAIL` and working SMTP credentials are set, because
+  `bootstrap_admin` must create and email the first superuser.
+- **Any integrity-audit error blocks every deploy**, hotfixes included.
+
+Before production, move migrations, bootstrap and the audit to a controlled
+pre-deploy step on a paid plan.
+
+Every management command, including the cron jobs, runs the production
+settings validation. That is why each cron service in `render.yaml` sets its
+own generated `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS=bc-ladder.invalid`
+and `DJANGO_SECURE_SSL_REDIRECT=true`. The cron jobs create no signed links
+today. If a future cron sends signed links, it must share the web service's
+secret key.
 
 Recommended first deploy sequence:
 
@@ -177,14 +199,19 @@ Recommended first deploy sequence:
 5. Confirm the build logs show:
 
    ```bash
-   python manage.py migrate
+   python manage.py migrate --noinput
    python manage.py bootstrap_admin
    python manage.py audit_data_integrity
+   python manage.py collectstatic --noinput
    ```
 
 6. Visit `https://<render-host>/health/` and confirm `{"status": "ok"}`, then
-   visit `/health/ready/` and confirm `{"status": "ready"}`.
-7. Register a temporary player account through `/accounts/register/`.
+   visit `/health/ready/` and confirm `{"status": "ready"}`. If the browser
+   reports too many redirects, add the proxy SSL header variables described
+   above.
+7. Register a temporary player account through `/accounts/register/`. New
+   accounts stay inactive until the emailed verification link is opened, so
+   this step needs working SMTP.
 
 `DJANGO_ALLOWED_HOSTS` is optional for the first `.onrender.com` trial because
 the app accepts Render's `RENDER_EXTERNAL_HOSTNAME` as the default host. Set

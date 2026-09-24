@@ -1,66 +1,64 @@
-# Current Stage: Frontend Pilot and Deployment
+# Current Stage: Pilot Launch Readiness
 
 This is the authoritative execution order until the project owner changes it.
-Track it in one GitHub roadmap issue with a checklist. Keep one roadmap branch
-and pull request active at a time. Start each branch from updated `main`, finish
-its commits in order, and merge it with green checks before starting the next.
+Keep one active roadmap branch and pull request at a time. Start each branch
+from updated `main`, and merge it with green `quality`, `sqlite`, `postgres`
+and `frontend` checks before starting the next. Branches use the `codex/*` or
+`agent/*` prefix, since CI runs on both.
 
-## Branch 1: Frontend pilot experience
+## Done (on `main`)
 
-Branch: `agent/phase-b1-frontend-pilot`
+| Stage | Where |
+| --- | --- |
+| Frontend pilot: design system, shell, journeys, browser CI | `agent/phase-b1-frontend-pilot`, then the rebuild in PR #11 |
+| Transactional email: match requests, score conflicts, recovery | PRs #8, #10 |
+| Matchmaking commands, booking/membership lock order, PostgreSQL contention tests | PR #12 |
+| Production hardening tasks 1–15: fail-closed settings, rate limits, outbox leasing, `bootstrap_admin`, readiness, cron jobs, Sentry, admin invariants, headers, anonymization, architecture doc | PRs #13–#15 |
+| Open registration without invite codes | PR #16 |
 
-Build one reviewable frontend outcome through sequential coherent commits:
+## In progress
 
-1. Audit every player journey and meaningful UI state; record the approved
-   frontend specification.
-2. Establish design tokens, shared components, responsive navigation, and the
-   page shell.
-3. Polish registration, login, profile setup, dashboard, and team workflows.
-4. Polish availability entry, timezone communication, validation, active
-   windows, and cancellation presentation.
-5. Polish suggestions, acceptance progress, selected lineups, matches, scoring,
-   cancellation, and ladder standings.
-6. Verify responsive, keyboard, accessibility, empty, error, stale, conflict,
-   and frontend regression behavior.
+- **Club redesign** on `agent/club-redesign`. It covers the new design system,
+  header and tab bar, Home without repetition, Play tabs, and the sign-in
+  pages; see `docs/frontend-pilot-spec.md`. It changes only templates, CSS
+  and JS, with no view, service or model changes. The gate: understandable on
+  phone, tablet and desktop, and all CI jobs green, including the rewritten
+  Playwright smoke test.
+- An older, unfinished redesign is still saved as a git stash ("frontend
+  redesign WIP (phase-b1)"). The club redesign supersedes it; the owner
+  decides whether to drop it.
 
-Preserve Django templates, forms, sessions, CSRF, redirects, and server-owned
-domain rules. Use small progressive JavaScript only where it materially improves
-the interaction. Defer React, a separate frontend application, a notification
-inbox, a visual availability planner, and new domain features. Transactional
-email delivery for account recovery, match requests, and score conflicts is an
-owner-approved exception implemented outside the frontend pilot slice.
+## Next: pilot launch (proposed order, owner to confirm)
 
-### Frontend gate
+The blockers and risks are detailed in
+[../production-readiness.md](../production-readiness.md).
 
-The journey is understandable on phone, tablet, and desktop; focused and full
-quality gates pass; visual and accessibility checks are recorded; GitHub SQLite
-and PostgreSQL jobs are green; and the pull request is merged.
+1. **Owner decisions.** Decide who may register and form teams (open,
+   invite, allowlist or approval), and how unfinished matches close.
+2. **Deployment fixes.**
+   - Add the proxy SSL header and `healthCheckPath` to `render.yaml`.
+   - Make rate limits and axes aware of the client IP behind the proxy.
+   - Cap email retry attempts.
+   - Move migrations, bootstrap and audit to a pre-deploy step.
+3. **Paid hosting and backups.**
+   - Move to a paid web plan and paid PostgreSQL with PITR.
+   - Set up a daily off-provider `pg_dump`.
+   - Record a restore rehearsal ([DEPLOYMENT.md](../../DEPLOYMENT.md#backups)).
+4. **Hosted rehearsal.** One administrator and four players go through the
+   full journey on staging: registration, team, availability, suggestion, dual
+   acceptance, both score submissions, standings. Also cover a score conflict
+   and a cancellation. Record the results in `production-readiness.md`.
 
-## Branch 2: Pilot deployment
+Use disposable data until step 3 is done and approved.
 
-Branch: `agent/phase-b2-pilot-deployment`
+### Launch gate
 
-Start after Branch 1 merges. Build through sequential coherent commits:
-
-1. Provide secure first-administrator provisioning.
-2. Finalize Render and PostgreSQL deployment configuration.
-3. Verify migrations, static assets, health checks, production checks, logging,
-   backup, restore, and rollback procedures.
-4. Document and run deployment smoke checks and a five-user rehearsal using one
-   administrator and four selected players.
-
-Use disposable data until database persistence, backups, and restore testing
-are approved for real club data.
-
-### Deployment gate
-
-The hosted staging application passes the full registration-to-match-result
-workflow; operational checks are recorded; GitHub checks are green; and the pull
-request is merged.
+Staging passes the rehearsal, operational checks and alerts are recorded,
+all CI jobs are green, and the owner approves releasing to a small controlled
+cohort.
 
 ## Pilot release
 
-Run the documented rehearsal after Branch 2. Create narrowly scoped fix branches
-only for observed pilot blockers and place unrelated ideas in the roadmap
-backlog. Release to a small controlled cohort after the administrator workflow,
-support procedure, backup policy, and rollback plan are ready.
+After the gate, release to a small cohort. Create narrowly scoped fix branches
+only for observed pilot blockers. Record unrelated ideas as GitHub issues (see
+[github.md](github.md)) instead of widening a branch.

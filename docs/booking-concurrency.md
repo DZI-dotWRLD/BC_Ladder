@@ -2,8 +2,9 @@
 
 The application retains arbitrary aware intervals, existing ladder/scoring
 policies, signed exact candidate commands, and historical match participants.
-No schema or applied migration changes are needed. PostgreSQL exclusions remain
-the final protection against overlapping active availability/reservations.
+This protocol is implemented in `ladder/services.py` (merged in PR #12).
+PostgreSQL exclusions (migration `0012`) remain the final protection against
+overlapping active availability/reservations.
 
 ## Stable parent locks
 

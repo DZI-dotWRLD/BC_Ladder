@@ -1,219 +1,116 @@
 # BC Tennis Ladder
 
-BC_ladder is a Django application for a private tennis club doubles ladder. It
-supports player profiles, men's and women's teams, availability, opponent
-suggestions, dual-team match acceptance, score submission, standings, and admin
-operations.
+A web app that runs a private tennis club's **Men's and Women's Doubles
+ladders**.
 
-See [Architecture](docs/architecture.md) for the domain model, state machines,
-service boundaries, concurrency protocol, operations, and configuration map.
+## The problem it solves
 
-## Local Setup
+Organizing ladder doubles by hand means chasing four people's schedules,
+settling who plays whom, and trusting that scores and standings are recorded
+fairly. BC Ladder automates that loop:
 
-From PowerShell:
+1. **Register** with a unique email, then verify it through a one-time link.
+2. **Form a team** of two or three players. You can create a team, or ask to
+   join one, in which case an administrator approves.
+3. **Post availability** as time windows in the club timezone.
+4. **Find opponents.** The app computes every two-player lineup from your team
+   that shares a free window with a lineup from another team in the same
+   ladder. It ranks them by ladder-points proximity.
+5. **Request a match.** Only the four selected players are involved: once one
+   player on *each* side accepts, the match is booked atomically and those
+   four players' time is reserved.
+6. **Play and report.** Each team submits the best-of-three score. Matching
+   submissions complete the match and award 3 points to the winner. If the
+   submissions differ, an administrator resolves the conflict with an audited
+   correction.
+7. **Standings** update exactly once per result. Ties are ordered by points,
+   then wins, then fewer losses, then team name.
+
+History is never rewritten. Past memberships, matches, scores, point ledgers
+and workflow events survive later team or account changes.
+
+## Stack
+
+Django 6.0 on Python 3.14. The pages are server-rendered templates with a
+small amount of progressive JavaScript. PostgreSQL 17 is the production
+database and SQLite is used for local development. Static files are served by
+WhiteNoise, and gunicorn runs the app on Render. Email goes over SMTP (Gmail)
+through a transactional outbox. Sentry is optional.
+
+## Local setup (PowerShell)
 
 ```powershell
 py -3.14 -m venv venv
-.\venv\Scripts\python.exe -m pip install --upgrade pip
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
+.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+$env:DJANGO_DEBUG = "true"
 .\venv\Scripts\python.exe manage.py migrate
+.\venv\Scripts\python.exe manage.py seed_demo
 .\venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
 ```
 
-Copying `.env.example` is what explicitly enables `DEBUG` for local development.
-If `DJANGO_DEBUG` is unset, the application now fails closed and refuses to
-start until all required production settings are valid.
+**`DJANGO_DEBUG=true` must be set in the shell.** Settings read only real
+environment variables, and nothing loads a `.env` file. Without that variable
+the app assumes production and refuses to start on SQLite. `.env.example`
+lists the local defaults for reference. In development, email is printed to
+the console, including verification links.
 
-Open:
+Demo accounts (local only): `demo-admin` / `DemoPass123!` and
+`demo-mens-1` / `DemoPass123!`. `seed_demo` is idempotent. It refuses to run
+when DEBUG is off, or against a PostgreSQL database whose name doesn't contain
+demo, dev, test or ci. `--allow-non-debug` overrides both guards, so never use
+it against club data.
 
-```text
-http://127.0.0.1:8000/
-```
+## Main routes
 
-## Demo Data
+| Route | Purpose |
+| --- | --- |
+| `/` | Dashboard with the next action |
+| `/accounts/register/`, `/accounts/login/`, `/accounts/password-reset/` | Account access |
+| `/team/` | Create, join or leave a team |
+| `/availability/` | Post and cancel availability windows |
+| `/suggestions/` | Match requests; `?discover=1` searches for opponents |
+| `/matches/`, `/matches/<id>/` | Match history, detail, score entry, cancellation |
+| `/ladders/mens/`, `/ladders/womens/` | Standings |
+| `/admin/` | Membership approvals, score-conflict resolution, read-only history |
+| `/health/`, `/health/ready/` | Liveness and database readiness |
 
-Create deterministic local demo data:
+The navigation groups availability, suggestions and matches under **Play**.
 
-```powershell
-.\venv\Scripts\python.exe manage.py seed_demo
-```
-
-Local-only demo credentials:
-
-```text
-Admin: demo-admin / DemoPass123!
-Player: demo-mens-1 / DemoPass123!
-```
-
-The command is idempotent. Running it again updates/reuses the same users,
-profiles, teams, memberships, standings, availability, suggestions, and matches
-instead of creating duplicates.
-
-## Useful Routes
-
-```text
-/accounts/login/
-/accounts/register/
-/accounts/password-reset/
-/profile/setup/
-/
-/team/
-/availability/
-/suggestions/
-/matches/
-/ladders/mens/
-/ladders/womens/
-/admin/
-```
-
-## Quality Commands
+## Quality checks
 
 ```powershell
-.\venv\Scripts\python.exe manage.py test
-.\venv\Scripts\python.exe manage.py check
-.\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
-.\venv\Scripts\python.exe manage.py reconcile_standings
-.\venv\Scripts\python.exe manage.py audit_data_integrity
-.\venv\Scripts\python.exe manage.py purge_rate_limit_events
-git diff --check
+$env:DJANGO_DEBUG = "true"
+powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1                           # full
+powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1 -SkipFullTests -SkipAudit # fast
 ```
 
-Optional local quality tooling:
+The script runs `check`, `makemigrations --check`, Ruff format and lint,
+`git diff --check`, the test suite and pip-audit. It does **not** stop when
+a step fails, so read every step's output. `scripts/quality.sh` is the POSIX
+equivalent and does stop on failure.
 
-```powershell
-.\venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\venv\Scripts\python.exe -m ruff check .
-.\venv\Scripts\python.exe -m ruff format --check .
-.\venv\Scripts\python.exe -m pip_audit -r requirements.txt
-```
+GitHub Actions runs four jobs on pull requests and on pushes to `main`,
+`agent/**` and `codex/**`:
+- **quality:** lint, format, pip-audit, `check --deploy`, strict `collectstatic`.
+- **sqlite:** the full suite on SQLite.
+- **postgres:** the full suite on PostgreSQL 17, including the
+  PostgreSQL-only concurrency tests that are skipped on SQLite.
+- **frontend:** the Playwright Chromium smoke test (see
+  [tests/frontend/README.md](tests/frontend/README.md)).
 
-Run the standard local quality harness:
+To run the suite on a local PostgreSQL database, also set `DJANGO_DB_ENGINE`
+and `DJANGO_DB_NAME`, `USER`, `PASSWORD`, `HOST` and `PORT`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1
-```
+## Documentation map
 
-For a faster local pre-commit pass:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\quality.ps1 -SkipFullTests -SkipAudit
-```
-
-GitHub Actions runs tests, Django checks, migration consistency checks, Ruff,
-dependency audit, and deployment checks on pushes and pull requests. Tests run
-against both SQLite and PostgreSQL.
-
-Deployment steps live in [DEPLOYMENT.md](DEPLOYMENT.md).
-
-## PostgreSQL Local Verification
-
-SQLite remains the default for local development. To run against PostgreSQL,
-create a database and set:
-
-```powershell
-$env:DJANGO_DB_ENGINE = "django.db.backends.postgresql"
-$env:DJANGO_DB_NAME = "bc_ladder"
-$env:DJANGO_DB_USER = "bc_ladder"
-$env:DJANGO_DB_PASSWORD = "<password>"
-$env:DJANGO_DB_HOST = "localhost"
-$env:DJANGO_DB_PORT = "5432"
-.\venv\Scripts\python.exe manage.py migrate
-.\venv\Scripts\python.exe manage.py test
-```
-
-PostgreSQL-only concurrency tests are skipped under SQLite and run when
-`DJANGO_DB_ENGINE` points at PostgreSQL. PostgreSQL migrations also add database
-exclusion constraints that reject overlapping active availability and active
-match reservations for the same player. SQLite keeps service-level validation
-for local development, but PostgreSQL is the production correctness target for
-those race-sensitive rules.
-
-## Environment Variables
-
-Development defaults are local only. Deployed environments should set:
-
-```text
-DJANGO_SECRET_KEY
-DJANGO_DEBUG=false
-DJANGO_ALLOWED_HOSTS
-DJANGO_CSRF_TRUSTED_ORIGINS
-DATABASE_URL
-DJANGO_SECURE_SSL_REDIRECT=true
-DJANGO_SESSION_COOKIE_AGE=1209600
-DJANGO_SESSION_COOKIE_SECURE=true
-DJANGO_CSRF_COOKIE_SECURE=true
-DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-DJANGO_EMAIL_HOST=smtp.gmail.com
-DJANGO_EMAIL_PORT=587
-DJANGO_EMAIL_HOST_USER
-DJANGO_EMAIL_HOST_PASSWORD
-DJANGO_EMAIL_USE_TLS=true
-DJANGO_DEFAULT_FROM_EMAIL
-DJANGO_BOOTSTRAP_ADMIN_USERNAME
-DJANGO_BOOTSTRAP_ADMIN_EMAIL
-DJANGO_NOTIFICATION_DELIVERY_MODE=scheduled
-SENTRY_DSN
-```
-
-Render deployments can use `render.yaml`; Render supplies `DATABASE_URL` from
-the managed PostgreSQL service and `RENDER_EXTERNAL_HOSTNAME` for the default
-`.onrender.com` host. For manual non-Render deployments, the older
-`DJANGO_DB_ENGINE`, `DJANGO_DB_NAME`, `DJANGO_DB_USER`, `DJANGO_DB_PASSWORD`,
-`DJANGO_DB_HOST`, and `DJANGO_DB_PORT` variables are still supported.
-For the Render Free trial, `build.sh` runs migrations during the build because
-Free web services do not provide Shell/pre-deploy access. Move migrations to a
-controlled release step before production.
-The release build runs `bootstrap_admin` after migrations. On the first release,
-the configured bootstrap administrator receives a one-time link for setting a
-password; later releases detect the existing superuser and exit successfully.
-
-Enable `DJANGO_SECURE_HSTS_SECONDS` only after HTTPS is verified end to end.
-When `DJANGO_DEBUG=false`, startup fails if a real secret key, non-local
-allowed hosts, PostgreSQL database settings, secure cookies, and HTTPS redirect
-are not configured.
-If `DJANGO_CSRF_TRUSTED_ORIGINS` is set in production, use explicit `https://`
-origins only; local development origins and wildcards are rejected.
-
-Password recovery uses Django's signed, one-time reset links. New registrations
-must include a unique email address. Existing accounts without an email need an
-administrator to add one before those players can recover their passwords.
-Development writes reset messages to the console. In production, configure the
-SMTP variables shown in `.env.example`; use `DJANGO_EMAIL_USE_TLS=true` for
-STARTTLS (commonly port 587) or `DJANGO_EMAIL_USE_SSL=true` for implicit TLS
-(commonly port 465), but never both. Reset links expire after one hour by
-default and can be adjusted with `DJANGO_PASSWORD_RESET_TIMEOUT`.
-Notification outbox delivery defaults to `inline` with DEBUG or during tests
-and to `scheduled` otherwise. A production scheduler must run
-`python manage.py send_notification_emails --retry-failed` every minute.
-Error tracking is disabled when `SENTRY_DSN` is unset. When configured, Sentry
-uses its Django integration with default PII collection disabled and filters
-email, password, authorization, and cookie fields before sending events.
-
-## Current Limitations
-
-- SQLite is supported for local development. PostgreSQL is configured in CI for
-  production-style transaction, range-overlap constraints, and concurrency
-  verification.
-- Players self-register with a unique email address and activate their account
-  through a one-time email-verification link. Selected lineup players, not unrelated teammates,
-  accept suggestions and submit scores.
-- Suggestions expire at the proposed match start time.
-- Equal-points ladder ordering is points, wins, fewer losses, then team name/id.
-- Score-conflict correction is admin-only through an audited official-submission
-  workflow.
-- New match requests email the four selected players. Score conflicts email all
-  active staff administrators. Delivery uses a transactional outbox; run
-  `python manage.py send_notification_emails --retry-failed` to retry provider
-  failures, or `python manage.py send_notification_emails --retry-skipped` after
-  correcting a legacy user's email. New registrations require an email address.
-- Captain role, additional notification channels, and richer score-correction
-  policy still need product decisions before production.
-- The UI is server-rendered and intentionally lightweight. It is ready for club
-  review, not final brand polish.
-
-## Current Project Stage
-
-The locked frontend-pilot and deployment sequence lives in
-[docs/agents/current-stage.md](docs/agents/current-stage.md). Keep that roadmap
-as the single source of truth instead of duplicating a phase checklist here.
+| Document | Read it for |
+| --- | --- |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | The authoritative business rules and invariants |
+| [docs/architecture.md](docs/architecture.md) | Models, state machines, services, configuration, commands |
+| [docs/booking-concurrency.md](docs/booking-concurrency.md) | Lock order and standings serialization |
+| [docs/matchmaking-candidates.md](docs/matchmaking-candidates.md) | The opponent-search algorithm and signed commands |
+| [docs/frontend-pilot-spec.md](docs/frontend-pilot-spec.md) | UI contract, states and accessibility rules |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Environment, Render, cron jobs, backups, rollback, incidents |
+| [docs/production-readiness.md](docs/production-readiness.md) | What is ready, and the blockers before real club data |
+| [docs/agents/current-stage.md](docs/agents/current-stage.md) | The active roadmap |
+| [AGENTS.md](AGENTS.md) | Rules for AI coding agents working in this repo |

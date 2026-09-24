@@ -30,6 +30,9 @@ Men's and Women's Doubles ladders.
   teams.
 - Players may request team removal or joining; only an authorized administrator
   completes removal and resolves requests that require administration.
+  Current implementation: joining an existing team requires administrator
+  approval. A player without a team may create a new team directly and becomes
+  its first active member without approval.
 - Membership changes preserve historical suggestions, participants, matches,
   scores, standings, ledgers, and workflow records.
 - Recorded match participants retain match read access after membership changes.
@@ -41,9 +44,12 @@ Men's and Women's Doubles ladders.
 ## Availability and lineups
 
 - Availability belongs to an individual player. Persist timezone-aware values
-  in UTC and display the configured club or user timezone.
+  in UTC and display the configured club timezone (`DJANGO_TIME_ZONE`). There
+  is no per-user timezone yet.
 - An end must be after its start. Reject duplicate or overlapping active windows
-  for one player.
+  for one player. Current implementation: a window starts and ends on the same
+  club-local day, and ambiguous or nonexistent daylight-saving local times are
+  rejected.
 - Availability changes never silently invalidate a confirmed match.
 - A confirmed match consumes or reserves the slot for exactly its four selected
   participants, never a non-selected third teammate.
@@ -68,7 +74,7 @@ Men's and Women's Doubles ladders.
   suggestion. Repeated acceptance is idempotent.
 - Confirmation runs in one database transaction: lock the suggestion and all
   availability or reservation rows that may be consumed; re-check membership,
-  lineup, ladder, availability, version, and conflicts; create one match;
+  lineup, ladder, availability, expiry, and conflicts; create one match;
   reserve exactly four players; and commit once.
 - Use `transaction.atomic()`, `select_for_update()`, uniqueness, and PostgreSQL
   exclusion constraints where applicable. A pre-transaction check alone is not
@@ -98,13 +104,17 @@ Men's and Women's Doubles ladders.
   are invalid.
 - A deciding tie-break is invalid after one team already won both regular sets.
   Preserve the implementation's regular-set and 6-6 policy unless explicitly
-  changed.
+  changed. Current policy: a regular set is valid only as 6-0 to 6-4, 7-5 or
+  7-6. 6-5, 6-6 and 8-x are rejected. Tie-break scores are capped at 99.
 - Validate scores on the server. Score submission, official result selection,
   ladder updates, and point-ledger writes are atomic and idempotent.
 - Do not update points until the submitted score is valid and the configured
   result-confirmation requirements are satisfied.
 - Preserve the configured point algorithm and equal-points ordering unless an
-  approved task changes them.
+  approved task changes them. Current algorithm: 3 points for a win and 0 for
+  a loss (`WIN_POINTS`). Equal points are ordered by more wins, then fewer
+  losses, then team name, then team ID.
+- A suggestion expires at its proposed start time.
 - Score conflicts remain actionable through `AdminNotification`; resolving one
   uses the audited official-submission correction workflow.
 
@@ -202,5 +212,8 @@ Read the current implementation or obtain owner approval before changing:
 - club timezone and availability granularity;
 - captain permissions;
 - additional notification delivery channels and any future provider migration;
-- richer score-correction policy; and
+- richer score-correction policy, including how a match closes when only one
+  team or neither team submits a score (today it stays scheduled indefinitely);
+- who may register and form teams. Invite codes were removed in PR #16, so any
+  verified email can currently register and create a team; and
 - long-term production hosting, retention, backup, and monitoring policy.

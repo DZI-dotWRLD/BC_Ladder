@@ -17,6 +17,7 @@ This document describes the implementation, not a replacement policy.
 | Path | Responsibility |
 | --- | --- |
 | `config/settings.py` | Environment parsing, Django integration, security policy, logging, email, and production fail-closed validation. |
+| `config/sentry.py` | Optional Sentry initialization and PII-scrubbing `before_send`. |
 | `config/urls.py`, `config/views.py` | Root routing plus liveness and database-readiness endpoints. |
 | `ladder/models.py` | Persisted state, indexes, constraints, and small state-local validation. |
 | `ladder/services.py` | Authorized transactional mutations, matchmaking, booking, scoring, and standings. |
@@ -28,9 +29,13 @@ This document describes the implementation, not a replacement policy.
 | `ladder/admin.py` | Operational administration with history and domain-invariant safeguards. |
 | `ladder/templates/`, `ladder/static/` | Server-rendered presentation and progressive JavaScript. |
 | `ladder/management/commands/` | Provisioning, maintenance, audit, recovery, and demo commands. |
-| `ladder/tests_*.py` | Feature, integration, concurrency, admin, and hardening regression tests. |
+| `ladder/tests_*.py` | 15 modules, about 247 tests: feature, integration, concurrency, admin, and hardening regressions. |
+| `tests/frontend/` | Playwright Chromium smoke test (`check.mjs`) run by the CI `frontend` job. |
+| `scripts/quality.ps1`, `scripts/quality.sh` | Local quality sequence. |
+| `.github/workflows/django.yml` | CI jobs: `quality`, `sqlite`, `postgres`, `frontend`. |
 | `docs/booking-concurrency.md` | Required lock order and booking/standings serialization protocol. |
 | `docs/matchmaking-candidates.md` | Candidate-search algorithm, signed command, and complexity contract. |
+| `docs/production-readiness.md` | Current readiness verdict, blockers, and risks. |
 | `DEPLOYMENT.md`, `render.yaml`, `build.sh` | Production configuration, scheduled jobs, backup, rollback, and incident operations. |
 
 ## Domain model
@@ -84,7 +89,9 @@ active ── request removal ──> active + removal_requested_at
 ```
 
 Only administrators resolve requests. A player has at most one active
-membership, and a team has at most three active members.
+membership, and a team has at most three active members. Creating a team is
+the exception to the request flow: `create_team_for_player` makes the creator
+an `active` member immediately, with no administrator step.
 
 ### Suggestion and booking
 
@@ -98,7 +105,11 @@ proposed ── first team accepts ──> partially_accepted
     └─ policy transition ──> cancelled
 ```
 
-Acceptances are idempotent. A confirmed retry returns the existing match.
+No service currently writes `declined` or `cancelled`: there is no player
+decline action, and only `seed_demo` creates cancelled demo rows. A suggestion
+expires at its start time. An accept attempt after that time commits the
+`expired` status and then reports a stale error. Acceptances are idempotent.
+A confirmed retry returns the existing match.
 Selected participants and the interval have no mutation service and are
 revalidated under the suggestion lock.
 
@@ -123,10 +134,16 @@ waiting_for_submissions ── different opponent submission ──> conflict
 conflict ── administrator selects existing submission ──> resolved/completed
 ```
 
-Score validation is best of three. Split regular sets require a deciding match
-tie-break to at least 10, won by two. Finalization writes the confirmed result,
-two idempotent ledger entries, standings, match state, and position changes in
-one transaction.
+Score validation is best of three. A regular set is valid only as 6-0 to 6-4,
+7-5 or 7-6. Split regular sets require a deciding match tie-break to at least
+10, won by two, with a cap of 99. The form bounds regular sets to 0-7. A win is
+worth 3 points (`WIN_POINTS`) and a loss 0. Positions sort by points, wins,
+fewer losses, case-insensitive team name, then team ID. Finalization writes
+the confirmed result, two idempotent ledger entries, standings, match state,
+and position changes in one transaction.
+
+A match where only one team, or neither team, submits stays `scheduled`. No
+deadline, job or admin action closes it.
 
 ### Email delivery
 
@@ -144,7 +161,9 @@ a worker records `sent`.
 ## Service API and actor rules
 
 Domain failures are `DomainError` subclasses: `InvalidInput`, `StaleState`,
-`AuthorizationFailure`, `BookingCollision`, and `ProvisioningError`.
+`AuthorizationFailure`, `BookingCollision`, and `ProvisioningError` in
+`services.py`, plus `RegistrationConflict` and `VerificationFailure` in
+`registration.py`.
 
 | Service | Actor/authorization contract | Transactional effect |
 | --- | --- | --- |
@@ -155,7 +174,7 @@ Domain failures are `DomainError` subclasses: `InvalidInput`, `StaleState`,
 | `request_membership_change` | The player themself or staff. | Requests/creates a join or records a removal request under player/team locks. |
 | `create_team_for_player` | The player themself or staff. | Creates a team, initial membership, standing, and position update. |
 | `cancel_join_request` | The player themself or staff. | Cancels one pending join request and appends its event idempotently. |
-| `anonymize_user_account` | Trusted `anonymize_user` command only. | Cancels open player state through services, removes identity fields, and deactivates without deleting history. |
+| `anonymize_user_account` | Trusted `anonymize_user` command only. | Cancels active availability and pending join requests, removes identity fields, sets an unusable password and deactivates the account without deleting history. It does not end an active membership or touch open suggestions or scheduled matches. |
 | `resolve_membership_request` | Staff only. | Approves/rejects a join or removal request and appends the applicable join event. |
 | `save_availability`, `cancel_availability` | Authenticated owner only. | Creates a non-overlapping interval or cancels an unreserved active interval. |
 | `get_team_players`, `get_player_pairs`, `generate_team_lineups` | Read helpers; caller must already be allowed to view the team. | Return active roster members and deterministic two-player overlaps. |
@@ -172,6 +191,10 @@ Domain failures are `DomainError` subclasses: `InvalidInput`, `StaleState`,
 | `create_admin_notification_for_conflict` | Internal scoring workflow. | Idempotently creates the conflict notification, event, and staff email outbox rows. |
 | `finalize_match_result` | Internal scoring workflow after matching submissions. | Applies official result, ledger, standings, and completion exactly once. |
 | `resolve_score_conflict` | Staff only. | Selects an existing submission and atomically corrects result, ledger, standings, audit, notification, and event. |
+| `register_player` (`registration.py`) | Public registration form. | Creates an inactive user and its `PlayerProfile` atomically and maps insert races to `RegistrationConflict`. |
+| `send_verification_email`, `activate_user_from_token` (`registration.py`) | Public; the token is Django's `default_token_generator`. | Sends the activation link directly, bypassing the outbox; activates exactly once under a user row lock. |
+| `record_workflow_event` (`workflow_events.py`) | Internal, called inside domain transactions. | Get-or-create by unique `dedupe_key` with snapshotted recipients. |
+| `queue_email_notifications`, `deliver_event_email_notifications` (`email_notifications.py`) | Internal / `send_notification_emails`. | Queue unique per-event/user rows; claim, send outside transactions, and finalize with a token check. |
 
 ## Concurrency protocol
 
@@ -210,6 +233,87 @@ complexity is in [`matchmaking-candidates.md`](matchmaking-candidates.md).
 8. Commit makes the outcome visible. A conflict rolls back the second
    acceptance and every booking side effect; an already-confirmed retry returns
    the existing match.
+
+## Registration and account security
+
+1. `/accounts/register/` collects a first and last name (spaces allowed,
+   whitespace normalized, stored on `User.first_name` and `User.last_name`),
+   a username for login (no spaces), an email, a gender and a password. The
+   interface shows `get_full_name`, falling back to the username for accounts
+   created before names were collected.
+   `register_player` creates an **inactive** `User` and its `PlayerProfile` in
+   one transaction. A database expression index on
+   `NullIf(Lower(Trim(email)), '')` enforces normalized email uniqueness
+   (migration `0016`).
+2. A verification link is sent directly by `send_verification_email`, not
+   through the outbox. Its token lives as long as `DJANGO_PASSWORD_RESET_TIMEOUT`.
+3. Opening the link (a GET) activates the account once under a row lock and
+   logs the user in. Normal sign-ups never see `/profile/setup/`. That page is
+   only for users created without a profile, such as the bootstrap admin or
+   admin-created users.
+4. There are no invite codes (removed in migration `0022`). Registration is
+   open to anyone with a verifiable email.
+
+Abuse controls:
+- **django-axes:** locks out after 5 failed logins for 1 hour, keyed on
+  username and IP, with a database handler and the `registration/lockout.html`
+  template.
+- **`enforce_rate_limit`:** backed by `RateLimitEvent`, with keys stored as
+  SHA-256 hashes and serialized by a PostgreSQL advisory lock. Password-reset
+  and verification-resend requests are capped at 10 per IP per hour and 3 per
+  email per hour. Requests over the limit get the same response as successful
+  ones. The IP is `REMOTE_ADDR`, so behind a proxy it is the proxy's address
+  (see [production-readiness.md](production-readiness.md)).
+
+## Frontend composition
+
+Pages are Django templates extending `ladder/base.html`, styled by one
+stylesheet (`static/ladder/club.css`) and enhanced by one small script
+(`static/ladder/app.js`). There is no frontend build and no client-side
+rendering. Each piece of information has exactly one home:
+
+| Area | Routes | Shows |
+| --- | --- | --- |
+| **Home** | `/` | Greeting, next match (or the single next setup step), standing, open match requests |
+| **Play** | `/availability/`, `/suggestions/`, `/matches/` | Three server routes behind one tab control (`partials/play_tabs.html`) |
+| **Ladder** | `/ladders/<division>/` | Standings with a division switch |
+| **Account menu** | `/team/`, logout | Team roster and join/create/leave; logout is a POST |
+
+The header is sticky, with the crest, the main navigation (a centered pill on
+desktop, a fixed bottom tab bar under 48rem) and the account menu. Shared
+partials:
+- `icon.html`: inline SVG icons;
+- `help.html`: a `?` disclosure that keeps instructions hidden until asked;
+- `form_fields.html`: labels, errors, and help text that appears when the
+  field is focused but stays linked through `aria-describedby`;
+- `pagination.html`.
+
+`app.js` only enhances:
+- it closes popovers on an outside click or Escape;
+- it auto-dismisses success toasts;
+- it prevents double submits and shows progress;
+- it shows a header shadow once the page scrolls; the header itself is always
+  opaque;
+- it replaces the two raw `datetime-local` availability fields with a picker:
+  day chips for the next 14 days, Morning/Midday/Afternoon/Evening presets,
+  and From/To selects in 30-minute steps between 6 AM and 10 PM. The picker
+  writes back into the same `starts_at` and `ends_at` fields, so the form, the
+  view and the validation don't change, and without JavaScript the native
+  fields are shown;
+- it auto-advances between score inputs and highlights the tie-break only
+  when the sets are split.
+
+Motion:
+- `app.js` reveals `.reveal` and `.stagger` elements with an
+  `IntersectionObserver`.
+- `boot.js`, loaded without `defer`, adds a `js` class before first paint, so
+  the hidden starting state never applies without JavaScript.
+- The match-card photo parallax uses a CSS scroll-driven animation.
+- Page transitions use CSS cross-document view transitions. Every animation is
+disabled under `prefers-reduced-motion`. The fonts are Inter and Cormorant
+Garamond (OFL), self-hosted in `static/ladder/fonts/`, because the CSP allows
+only same-origin fonts, scripts and styles. That CSP also means there are no
+inline scripts or `style` attributes.
 
 ## Email outbox and retry operations
 
@@ -277,9 +381,32 @@ incident procedures are in [`DEPLOYMENT.md`](../DEPLOYMENT.md).
 | `DJANGO_WHITENOISE_MANIFEST_STRICT` | Strict static manifest; required true in production. |
 | `SENTRY_DSN` | Optional Sentry activation; unset means no SDK initialization. |
 
+Defaults that matter:
+- `DJANGO_EMAIL_BACKEND` is the console backend when DEBUG is on and SMTP
+  otherwise.
+- `EMAIL_HOST` defaults to `localhost`, the port to 587, `USE_TLS` to true
+  and the timeout to 10 seconds.
+- `DEFAULT_FROM_EMAIL` defaults to `BC Tennis Ladder <no-reply@localhost>`.
+- Secure cookies and a strict WhiteNoise manifest default to `not DEBUG`.
+- `DJANGO_SECURE_SSL_REDIRECT` defaults to false.
+- Notification delivery is `inline` when DEBUG is on or tests are running, and
+  `scheduled` otherwise.
+
+With DEBUG off, production validation also requires the following, and it
+runs for every management command:
+- a secret that is at least 32 characters, has at least 5 unique characters,
+  is not the development key and has no `django-insecure-` prefix;
+- no `*` in allowed hosts;
+- both proxy-header variables set, or neither;
+- HSTS preload only with include-subdomains and at least 31,536,000 seconds;
+- non-empty `DJANGO_DB_NAME`, `USER`, `PASSWORD` and `HOST` when
+  `DATABASE_URL` is unset.
+
 The enforced CSP is same-origin for default, scripts, styles, and forms; images
-also allow `data:` and `frame-ancestors` is `none`. Copy `.env.example` for
-explicit local-development defaults. Never commit real secrets.
+also allow `data:` and `frame-ancestors` is `none`. Settings read only process
+environment variables. Nothing loads `.env`, and `.env.example` is only a
+reference list, so set `DJANGO_DEBUG=true` in the shell for local work. Never
+commit real secrets.
 
 ## Running tests and quality checks
 

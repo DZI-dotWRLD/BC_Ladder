@@ -9,6 +9,25 @@ Use the testing framework and conventions already present in the repository.
 Do not introduce pytest, factory_boy, coverage tools, or plugins merely because
 they are familiar.
 
+## This repository
+
+- **Framework:** Django `TestCase` and `TransactionTestCase` in
+  `ladder/tests_<area>.py`. Put a new test in the module for its area
+  (`tests_scoring`, `tests_membership`, `tests_booking_concurrency`, and so
+  on). There are no factories; each module builds data with local helpers.
+- **PostgreSQL-only classes** (`PostgreSQLConcurrencyTests` in
+  `tests_phase_b`, `PostgreSQLBookingContentionTests`,
+  `PostgreSQLRegistrationRaceTests`) are skipped on SQLite. They run in the
+  CI `postgres` job, or locally with the `DJANGO_DB_*` variables set.
+- **Query bounds:** `assertNumQueries(4)` guards the matchmaker snapshot, and
+  `CaptureQueriesContext` is used for page composition.
+- **Browser:** `tests/frontend/check.mjs` (Playwright Chromium) runs against
+  `seed_demo` data.
+- **Commands:** set `DJANGO_DEBUG=true` first, then run
+  `python manage.py test ladder.tests_<area> --noinput`. `scripts/quality.ps1`
+  or `scripts/quality.sh` runs the full gate sequence. The PowerShell script
+  does not stop on failure, so read every step's output.
+
 ## Test strategy
 
 Prefer the smallest test that proves the rule, then add integration coverage for

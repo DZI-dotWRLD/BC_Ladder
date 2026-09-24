@@ -18,16 +18,36 @@ confirmation, or ladder point updates.
 - At 9-9, continue until one team leads by two.
 - A deciding tie-break is not played if one team won both regular sets.
 
-## Do not guess regular-set policy
+## The implemented policy (do not change without owner approval)
 
-Inspect existing code or configured rules for:
+All of this is in `ladder/services.py`:
+- **`validate_regular_set`:** valid only as 6-0 to 6-4, 7-5 or 7-6 (7-6
+  implies a set tie-break). 6-5, 6-6 and anything above 7 are invalid. There
+  are no shortened sets.
+- **`validate_match_tiebreak`:** the winner has at least 10, wins by at least
+  2, and each score is capped at 99.
+- **`validate_match_score`:** two or three entries. A straight-set win
+  rejects a third entry. Split sets require the third entry to be a match
+  tie-break. It derives the winner and returns normalized sets.
+- **Form bounds** (`ScoreSubmissionForm`): regular sets 0-7, tie-break 0-99.
+- **Not modelled:** retirement, walkover, default and no-show. A match
+  missing a submission stays `scheduled`; this is an open owner decision.
+- **Points:** `WIN_POINTS = 3` for a win and 0 for a loss. Standings order by
+  points, wins, fewer losses, case-insensitive name, then team ID.
 
-- whether a regular set is first to six by two;
-- whether a tie-break occurs at 6-6;
-- allowed shortened-set formats;
-- retirement, walkover, default, or incomplete-match handling.
+## Submission and confirmation flow
 
-Keep regular-set validation in a separate function or strategy from deciding
+Each team submits once (`MatchResultSubmission` is unique per match and
+team). Resubmitting the identical score is a no-op. Only the immutable
+selected `MatchParticipant`s may submit. When the two submissions match,
+`finalize_match_result` writes the result, ledger, standings and positions
+once. When they differ, `create_admin_notification_for_conflict` creates the
+conflict notification, and an administrator resolves it with
+`resolve_score_conflict` (admin action "Use selected submission as official
+score"), which writes a `ScoreCorrectionAudit`. Standings writers take the
+per-division advisory lock first (see `docs/booking-concurrency.md`).
+
+Keep regular-set validation in a separate function from deciding
 match-tie-break validation.
 
 ## Recommended domain API
