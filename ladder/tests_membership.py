@@ -122,6 +122,8 @@ class PhaseARequestTests(TestCase):
         response = self.client.post(
             reverse("ladder:register"),
             {
+                "first_name": " Mary  Anne ",
+                "last_name": "van der Berg",
                 "username": "new-register",
                 "email": "New.Player@Example.com",
                 "gender": PlayerProfile.GENDER_FEMALE,
@@ -134,6 +136,7 @@ class PhaseARequestTests(TestCase):
         self.assertRedirects(response, reverse("ladder:verification_sent"))
         self.assertTrue(PlayerProfile.objects.filter(user=user, gender=PlayerProfile.GENDER_FEMALE).exists())
         self.assertEqual(user.email, "new.player@example.com")
+        self.assertEqual((user.first_name, user.last_name), ("Mary Anne", "van der Berg"))
         self.assertFalse(user.is_active)
         self.assertNotIn("_auth_user_id", self.client.session)
         self.assertEqual(len(mail.outbox), 1)
@@ -172,6 +175,24 @@ class PhaseARequestTests(TestCase):
         self.assertFormError(response.context["form"], "email", "Enter a valid email address.")
         self.assertFalse(get_user_model().objects.filter(username="no-email-register").exists())
 
+    def test_self_registration_requires_first_and_last_name(self):
+        response = self.client.post(
+            reverse("ladder:register"),
+            {
+                "first_name": "  ",
+                "username": "nameless",
+                "email": "nameless@example.com",
+                "gender": PlayerProfile.GENDER_FEMALE,
+                "password1": "StrongPass123!",
+                "password2": "StrongPass123!",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(response.context["form"], "first_name", "This field is required.")
+        self.assertFormError(response.context["form"], "last_name", "This field is required.")
+        self.assertFalse(get_user_model().objects.filter(username="nameless").exists())
+
     def test_dashboard_redirects_user_without_profile_to_setup(self):
         user = get_user_model().objects.create_user(username="needs-profile", password="pass")
         self.client.force_login(user)
@@ -198,21 +219,17 @@ class PhaseARequestTests(TestCase):
 
         response = self.client.get(reverse("ladder:dashboard"))
 
-        self.assertContains(response, "Dashboard")
-        self.assertContains(response, "Start here")
+        self.assertContains(response, "<title>Home | BC Tennis Ladder</title>", html=True)
         self.assertContains(response, team.name)
-        self.assertContains(response, 'class="dashboard-match-board"')
-        self.assertContains(response, 'data-fragment="dashboard-overview"')
-        self.assertContains(response, 'data-compose-url="/team/"')
-        self.assertContains(response, "dashboard-court-bw.jpg")
-        self.assertNotContains(response, "dashboard-section-nav")
-        self.assertContains(response, 'id="team"')
-        self.assertContains(response, "Plan a match")
-        self.assertContains(response, 'aria-label="Quick access"')
-        self.assertContains(response, 'aria-label="Play shortcuts"')
-        self.assertContains(response, 'aria-label="Ladder shortcuts"')
-        self.assertContains(response, f'href="{reverse("ladder:ladder", args=["womens"])}"')
-        self.assertNotContains(response, "tennis-net-cal-gao.jpg")
+        self.assertContains(response, f'href="{reverse("ladder:team")}"')
+        self.assertContains(response, 'aria-labelledby="next-match-heading"')
+        self.assertContains(response, "Your standing")
+        # One next step replaces the old setup checklist; nothing is lazily composed.
+        self.assertContains(response, "Set your availability")
+        self.assertContains(response, f'href="{reverse("ladder:availability")}"')
+        self.assertNotContains(response, "Start here")
+        self.assertNotContains(response, "data-compose-url")
+        self.assertNotContains(response, "dashboard-court-bw.jpg")
 
     def test_account_fields_keep_help_and_error_descriptions_connected(self):
         response = self.client.get(reverse("ladder:register"))
@@ -231,7 +248,9 @@ class PhaseARequestTests(TestCase):
 
         self.assertContains(dashboard_response, 'class="skip-link" href="#main-content"')
         self.assertContains(dashboard_response, 'id="main-content" tabindex="-1"')
-        self.assertContains(dashboard_response, "<summary>Menu</summary>", html=True)
+        self.assertContains(dashboard_response, 'aria-label="Main navigation"')
+        self.assertContains(dashboard_response, '<summary aria-label="Account menu">')
+        self.assertContains(dashboard_response, f'<form class="menu-foot" method="post" action="{reverse("ladder:logout")}">')
         self.assertContains(
             dashboard_response,
             f'href="{reverse("ladder:dashboard")}" aria-current="page"',
@@ -255,7 +274,8 @@ class PhaseARequestTests(TestCase):
 
         self.assertContains(response, "Team request pending")
         self.assertContains(response, "Dashboard Pending Team")
-        self.assertContains(response, "Add at least one active window.")
+        self.assertContains(response, "View request")
+        self.assertNotContains(response, "Add at least one active window.")
 
     def test_team_join_is_post_only_scoped_to_player_division_and_pending(self):
         profile = self.create_profile("joiner")

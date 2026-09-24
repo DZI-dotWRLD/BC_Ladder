@@ -1,9 +1,61 @@
 {% extends "ladder/base.html" %}
-{% block title %}Dashboard & Team | BC Ladder{% endblock %}
-{% block main_class %}dashboard-shell{% endblock %}
+{% block title %}Your team | BC Tennis Ladder{% endblock %}
+{% block main_class %}narrow team-page{% endblock %}
 {% block content %}
-<article class="dashboard-page">
-<div data-compose-url="{% url 'ladder:dashboard' %}" data-compose-fragment="dashboard-overview"><div class="compose-fallback"><a href="{% url 'ladder:dashboard' %}">Open dashboard</a><p data-compose-status role="status">Loading your dashboard…</p></div></div>
-<section id="team" class="dashboard-team-section">{% include "ladder/partials/team_content.html" %}</section>
-</article>
+{% if team %}
+    <header class="page-head reveal">
+        <p class="eyebrow">{{ team.get_division_display }} doubles</p>
+        <h1>{{ team.name }}</h1>
+    </header>
+    <section class="card reveal" aria-labelledby="roster-heading">
+        <header class="card-head">
+            <h2 id="roster-heading" class="card-title">Roster</h2>
+            <span class="capacity"><span class="capacity-bar" data-filled="{{ member_count }}" aria-hidden="true"><i></i><i></i><i></i></span>{{ member_count }}/{{ team_capacity }} members</span>
+        </header>
+        <ul class="roster stagger">
+            {% for member in members %}
+                <li><span class="avatar avatar-lg" aria-hidden="true">{{ member.user.username|first|upper }}</span><span><strong>{{ member.user.get_full_name|default:member.user.username }}</strong><span class="muted small">{% if member.user_id == user.id %}You{% else %}Teammate{% endif %}</span></span></li>
+            {% empty %}<li class="muted">No active members found.</li>{% endfor %}
+        </ul>
+        {% if team_is_full %}<p class="muted small">All team places are filled.</p>{% endif %}
+    </section>
+    {% if membership and membership.removal_requested_at %}
+        <p class="callout">{% include "ladder/partials/icon.html" with name="clock" %}Removal request pending admin review.</p>
+    {% elif membership %}
+        <details class="disclosure danger-zone">
+            <summary>Leave this team {% include "ladder/partials/icon.html" with name="chevron-down" %}</summary>
+            <p class="muted small">An administrator must approve removal before you can join another team. Your match history stays intact.</p>
+            <form method="post" action="{% url 'ladder:request_team_removal' %}">{% csrf_token %}<button class="btn btn-danger btn-sm" type="submit">Request removal</button></form>
+        </details>
+    {% endif %}
+{% else %}
+    <header class="page-head reveal">
+        <p class="eyebrow">Your team</p>
+        <h1>Find your partners</h1>
+        <p class="lede">Ladder matches are played by teams of two or three.</p>
+    </header>
+    {% if pending_join_request %}
+        <section class="card reveal" aria-labelledby="pending-heading">
+            <span class="badge badge-muted">Pending</span>
+            <h2 id="pending-heading" class="card-title">Request sent</h2>
+            <p class="muted">Your request to join {{ pending_join_request.team.name }} is pending admin review.</p>
+            <form method="post" action="{% url 'ladder:cancel_join_request' %}">{% csrf_token %}<button class="btn btn-quiet" type="submit">Cancel join request</button></form>
+        </section>
+    {% else %}
+        <div class="choice-grid">
+            <section class="card reveal" aria-labelledby="join-heading">
+                <header class="card-head">
+                    <h2 id="join-heading" class="card-title">Join a team</h2>
+                    {% include "ladder/partials/help.html" with label="How joining works" text="Choose a team in your division. An administrator reviews your request before your membership becomes active." %}
+                </header>
+                <form method="post" action="{% url 'ladder:join_team' %}" class="stack">{% csrf_token %}{% include "ladder/partials/form_fields.html" with form=join_form %}<button class="btn btn-primary btn-block" type="submit">Request to join</button></form>
+            </section>
+            <section class="card reveal" aria-labelledby="create-heading">
+                <header class="card-head"><h2 id="create-heading" class="card-title">Start your own</h2></header>
+                <form method="post" action="{% url 'ladder:create_team' %}" class="stack">{% csrf_token %}{% include "ladder/partials/form_fields.html" with form=create_form %}<button class="btn btn-ink btn-block" type="submit">Create team</button></form>
+                <p class="muted small">You become its first active member.</p>
+            </section>
+        </div>
+    {% endif %}
+{% endif %}
 {% endblock %}

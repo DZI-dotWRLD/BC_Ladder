@@ -1,3 +1,11 @@
 {% extends "ladder/base.html" %}
-{% block title %}Access denied | BC Ladder{% endblock %}
-{% block content %}<h1>Access denied</h1><p>You do not have permission to use this page or action.</p><a href="{% url 'ladder:dashboard' %}">Return to your dashboard</a>{% endblock %}
+{% block title %}Access denied | BC Tennis Ladder{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="error-page reveal">
+    <p class="error-code">403</p>
+    <h1>Access denied</h1>
+    <p class="lede">You do not have permission to use this page or action.</p>
+    <a class="btn btn-primary" href="{% url 'ladder:dashboard' %}">Return home</a>
+</section>
+{% endblock %}

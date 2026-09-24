@@ -62,6 +62,8 @@ class ProfileSetupForm(forms.ModelForm):
 
 
 class PlayerRegistrationForm(UserCreationForm):
+    first_name = forms.CharField(max_length=150, widget=forms.TextInput(attrs={"autocomplete": "given-name"}))
+    last_name = forms.CharField(max_length=150, widget=forms.TextInput(attrs={"autocomplete": "family-name"}))
     email = forms.EmailField(
         help_text="Used for account recovery, match requests, and important ladder notifications.",
         widget=forms.EmailInput(attrs={"autocomplete": "email"}),
@@ -70,7 +72,20 @@ class PlayerRegistrationForm(UserCreationForm):
 
     class Meta:
         model = get_user_model()
-        fields = ("username", "email", "gender", "password1", "password2")
+        fields = ("first_name", "last_name", "username", "email", "gender", "password1", "password2")
+        help_texts = {"username": "Used to log in. Letters, digits and @/./+/-/_ only (no spaces)."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The form opens on the player's name, not the login username.
+        self.fields["username"].widget.attrs.pop("autofocus", None)
+        self.fields["first_name"].widget.attrs["autofocus"] = True
+
+    def clean_first_name(self):
+        return " ".join(self.cleaned_data["first_name"].split())
+
+    def clean_last_name(self):
+        return " ".join(self.cleaned_data["last_name"].split())
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()

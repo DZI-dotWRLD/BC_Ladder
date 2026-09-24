@@ -1,9 +1,88 @@
 {% extends "ladder/base.html" %}
-{% block title %}Dashboard | BC Ladder{% endblock %}
-{% block main_class %}dashboard-shell{% endblock %}
+{% block title %}Home | BC Tennis Ladder{% endblock %}
+{% block main_class %}home{% endblock %}
 {% block content %}
-<article class="dashboard-page">
-{% include "ladder/partials/dashboard_overview.html" %}
-<section id="team" class="dashboard-team-section" data-compose-url="{% url 'ladder:team' %}" data-compose-fragment="team"><div class="compose-fallback"><h2>{% if team %}Your team{% else %}Find your team{% endif %}</h2><p data-compose-status role="status">Loading team details…</p><a href="{% url 'ladder:team' %}">Open team</a></div></section>
-</article>
+{% now "G" as hour %}
+<header class="page-head reveal">
+    <div class="page-head-copy">
+        <p class="eyebrow">{% now "l, F j" %}</p>
+        <h1>{% if hour|add:0 < 12 %}Good morning{% elif hour|add:0 < 18 %}Good afternoon{% else %}Good evening{% endif %}, {{ user.first_name|default:user.username }}</h1>
+        <p class="lede">{% if team %}<a class="inline-link" href="{% url 'ladder:team' %}">{{ team.name }}</a> · {{ team.get_division_display }} doubles{% else %}Welcome to the club ladder.{% endif %}</p>
+    </div>
+</header>
+
+<div class="home-grid">
+    <section class="card match-card reveal" aria-labelledby="next-match-heading">
+        {% if next_match %}
+            <header class="match-card-head">
+                <p class="eyebrow">Next match</p>
+                <span class="badge badge-clay">Confirmed</span>
+            </header>
+            <h2 id="next-match-heading" class="match-date">{{ next_match.scheduled_starts_at|date:"l, F j" }}</h2>
+            <p class="match-time">{% include "ladder/partials/icon.html" with name="clock" %}{{ next_match.scheduled_starts_at|date:"g:i A" }} – {{ next_match.scheduled_ends_at|date:"g:i A" }}</p>
+            <div class="versus-board">
+                <div class="side">
+                    <h3>{{ next_match.team_a.name }}</h3>
+                    <ul>{% for participant in next_match_team_a_players %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endfor %}</ul>
+                </div>
+                <span class="versus" aria-label="versus">vs</span>
+                <div class="side">
+                    <h3>{{ next_match.team_b.name }}</h3>
+                    <ul>{% for participant in next_match_team_b_players %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endfor %}</ul>
+                </div>
+            </div>
+            <footer class="card-actions"><a class="btn btn-light" href="{% url 'ladder:match_detail' next_match.id %}">View match {% include "ladder/partials/icon.html" with name="arrow-right" %}</a></footer>
+        {% else %}
+            <header class="match-card-head"><p class="eyebrow">Next match</p></header>
+            {% with step=setup_steps.1 %}
+            {% if not step.complete %}
+                <h2 id="next-match-heading" class="match-date">{{ step.label }}</h2>
+                <p class="muted">{{ step.detail }}</p>
+                <footer class="card-actions"><a class="btn btn-light" href="{% url 'ladder:team' %}">{% if step.label == "Team request pending" %}View request{% else %}Find your team{% endif %}</a></footer>
+            {% elif not setup_steps.2.complete %}
+                <h2 id="next-match-heading" class="match-date">Set your availability</h2>
+                <p class="muted">{{ setup_steps.2.detail }} Suggestions appear once teammates share a free window.</p>
+                <footer class="card-actions"><a class="btn btn-light" href="{% url 'ladder:availability' %}">Add a time</a></footer>
+            {% else %}
+                <h2 id="next-match-heading" class="match-date">The court is open.</h2>
+                <p class="muted">No match on the calendar yet.</p>
+                <footer class="card-actions"><a class="btn btn-light" href="{% url 'ladder:suggestions' %}?discover=1">{% include "ladder/partials/icon.html" with name="search" %}Find a match</a></footer>
+            {% endif %}
+            {% endwith %}
+        {% endif %}
+    </section>
+
+    <aside class="home-side">
+        <section class="card standing-card reveal" aria-labelledby="standing-heading">
+            <p class="eyebrow" id="standing-heading">Your standing</p>
+            {% if standing %}
+                <p class="rank"><span class="rank-hash">#</span><span data-count>{{ standing.position }}</span></p>
+                <dl class="stat-row">
+                    <div><dt>Points</dt><dd data-count>{{ standing.points }}</dd></div>
+                    <div><dt>Won</dt><dd data-count>{{ standing.wins }}</dd></div>
+                    <div><dt>Lost</dt><dd data-count>{{ standing.losses }}</dd></div>
+                </dl>
+                <a class="text-link" href="{% url 'ladder:ladder' team.division %}">Full ladder {% include "ladder/partials/icon.html" with name="arrow-right" %}</a>
+            {% else %}
+                <p class="rank rank-empty">—</p>
+                <p class="muted small">You join the ladder with your team.</p>
+            {% endif %}
+        </section>
+
+        {% if suggestions %}
+            <section class="card requests-card reveal" aria-labelledby="requests-heading">
+                <header class="card-head"><h2 id="requests-heading" class="eyebrow">Match requests</h2><span class="count">{{ suggestions|length }}</span></header>
+                <ul class="request-list stagger">
+                    {% for suggestion in suggestions %}
+                        <li><a href="{% url 'ladder:suggestions' %}#request-{{ suggestion.id }}">
+                            <span class="request-teams">{% if suggestion.team_a_id == team.id %}{{ suggestion.team_b.name }}{% else %}{{ suggestion.team_a.name }}{% endif %}</span>
+                            <span class="request-when">{{ suggestion.starts_at|date:"D, M j · g:i A" }}</span>
+                            {% include "ladder/partials/icon.html" with name="chevron-right" %}
+                        </a></li>
+                    {% endfor %}
+                </ul>
+            </section>
+        {% endif %}
+    </aside>
+</div>
 {% endblock %}

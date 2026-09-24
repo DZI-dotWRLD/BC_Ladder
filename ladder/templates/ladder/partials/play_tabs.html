@@ -1,0 +1,8 @@
+<header class="page-head play-head reveal">
+    <p class="eyebrow">Play</p>
+    <nav class="segmented" aria-label="Play sections">
+        <a href="{% url 'ladder:availability' %}"{% if active == "availability" %} aria-current="page"{% endif %}>{% include "ladder/partials/icon.html" with name="calendar" %}<span>Availability</span></a>
+        <a href="{% url 'ladder:suggestions' %}"{% if active == "suggestions" %} aria-current="page"{% endif %}>{% include "ladder/partials/icon.html" with name="search" %}<span>Find a match</span></a>
+        <a href="{% url 'ladder:matches' %}"{% if active == "matches" %} aria-current="page"{% endif %}>{% include "ladder/partials/icon.html" with name="play" %}<span>Matches</span></a>
+    </nav>
+</header>

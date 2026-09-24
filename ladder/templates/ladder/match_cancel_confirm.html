@@ -1,20 +1,17 @@
 {% extends "ladder/base.html" %}
-
-{% block title %}Cancel Match | BC Ladder{% endblock %}
-
-{% block main_class %}journey-shell{% endblock %}
+{% block title %}Cancel match | BC Tennis Ladder{% endblock %}
+{% block main_class %}narrow{% endblock %}
 {% block content %}
-<article class="scorecard-page"><a class="text-link scorecard-back" href="{% url 'ladder:availability' %}#matches">Back to Play</a>
-<h1>Cancel this match?</h1>
-<section class="panel">
-    <h2>{{ match.team_a.name }} vs {{ match.team_b.name }}</h2>
-    <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A" }}</p>
+<a class="back-link" href="{% url 'ladder:match_detail' match.id %}">{% include "ladder/partials/icon.html" with name="chevron-left" %}Match</a>
+<section class="card confirm-card reveal" aria-labelledby="cancel-heading">
+    <span class="confirm-icon">{% include "ladder/partials/icon.html" with name="alert" %}</span>
+    <h1 id="cancel-heading" class="card-title">Cancel this match?</h1>
+    <p><strong>{{ match.team_a.name }} vs {{ match.team_b.name }}</strong><br><span class="muted">{{ match.scheduled_starts_at|date:"l, F j · g:i A" }} – {{ match.scheduled_ends_at|date:"g:i A" }}</span></p>
     <p class="muted">This releases the reservation for all four selected players. The cancellation cannot be undone; rebooking requires a new suggestion.</p>
-    <form method="post" action="{% url 'ladder:cancel_match' match.id %}">
+    <form method="post" action="{% url 'ladder:cancel_match' match.id %}" class="confirm-actions">
         {% csrf_token %}
-        <button class="danger" type="submit">Cancel match for everyone</button>
-        <a class="button secondary" href="{% url 'ladder:match_detail' match.id %}">Keep match</a>
+        <a class="btn btn-quiet" href="{% url 'ladder:match_detail' match.id %}">Keep match</a>
+        <button class="btn btn-danger" type="submit">Cancel match for everyone</button>
     </form>
 </section>
-</article>
 {% endblock %}

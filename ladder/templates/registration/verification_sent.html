@@ -1,18 +1,13 @@
-{% extends "ladder/base.html" %}
-
-{% block title %}Verify your email | BC Ladder{% endblock %}
-
-{% block content %}
-<section class="panel">
-    <h1>Check your email</h1>
-    <p>Use the secure, one-time verification link to activate your account.</p>
-    <p class="muted">If the message does not arrive, check your spam folder or request another link.</p>
-    <form method="post" action="{% url 'ladder:resend_verification' %}">
-        {% csrf_token %}
-        {{ form.email.label_tag }}
-        {{ form.email }}
-        <button type="submit">Resend verification</button>
-    </form>
-    <p><a href="{% url 'ladder:login' %}">Return to login</a></p>
-</section>
+{% extends "registration/auth_base.html" %}
+{% block title %}Verify your email | BC Tennis Ladder{% endblock %}
+{% block auth %}
+<span class="confirm-icon confirm-icon-clay">{% include "ladder/partials/icon.html" with name="check" %}</span>
+<h1>Check your email</h1>
+<p class="lede">Use the secure, one-time verification link to activate your account.</p>
+<details class="disclosure">
+    <summary>Didn’t get it? {% include "ladder/partials/icon.html" with name="chevron-down" %}</summary>
+    <p class="muted small">Check your spam folder, or request another link.</p>
+    <form method="post" action="{% url 'ladder:resend_verification' %}" class="stack">{% csrf_token %}{% include "ladder/partials/form_fields.html" %}<button class="btn btn-quiet btn-block" type="submit">Resend verification</button></form>
+</details>
+<p class="auth-foot"><a class="text-link" href="{% url 'ladder:login' %}">Return to login</a></p>
 {% endblock %}

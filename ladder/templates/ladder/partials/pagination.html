@@ -1,7 +1,7 @@
 {% if page_obj.paginator.num_pages > 1 %}
-<nav aria-label="Results pages">
-    {% if page_obj.has_previous %}<a class="button secondary" href="?page={{ page_obj.previous_page_number }}">Previous page</a>{% endif %}
-    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
-    {% if page_obj.has_next %}<a class="button secondary" href="?page={{ page_obj.next_page_number }}">Next page</a>{% endif %}
+<nav class="pagination" aria-label="Results pages">
+    {% if page_obj.has_previous %}<a class="btn btn-quiet btn-sm" href="?page={{ page_obj.previous_page_number }}">{% include "ladder/partials/icon.html" with name="chevron-left" %}Previous page</a>{% else %}<span></span>{% endif %}
+    <span class="muted small">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a class="btn btn-quiet btn-sm" href="?page={{ page_obj.next_page_number }}">Next page{% include "ladder/partials/icon.html" with name="chevron-right" %}</a>{% else %}<span></span>{% endif %}
 </nav>
 {% endif %}

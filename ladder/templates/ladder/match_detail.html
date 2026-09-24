@@ -1,61 +1,94 @@
 {% extends "ladder/base.html" %}
-
-{% block title %}Match | BC Ladder{% endblock %}
-
-{% block main_class %}journey-shell{% endblock %}
+{% block title %}{{ match.team_a.name }} vs {{ match.team_b.name }} | BC Tennis Ladder{% endblock %}
+{% block main_class %}narrow scorecard-page{% endblock %}
 {% block content %}
-<article class="scorecard-page"><a class="text-link scorecard-back" href="{% url 'ladder:availability' %}#matches">Back to Play</a>
-<h1>{{ match.team_a.name }} vs {{ match.team_b.name }}</h1>
-<section class="panel">
-    <p>{{ match.scheduled_starts_at|date:"M j, Y g:i A" }} to {{ match.scheduled_ends_at|date:"g:i A T" }}</p>
-    <p>{{ state_note }}</p>
-    {% if official_result %}<h2>Official score</h2><p>{% for set in official_result.confirmed_from_submission.sets.all %}{{ set.team_a_score }}–{{ set.team_b_score }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-    <p><span class="status-pill">{{ match.get_status_display }}</span> <span class="status-pill">{% if official_result %}Official result recorded{% elif status == "waiting_for_submissions" %}Awaiting team scores{% elif status == "confirmed" %}Scores agreed{% elif status == "conflict" %}Score review needed{% endif %}</span></p>
-    <h2>Players</h2>
-    {% for participant in match.participants.all %}
-        <p>{{ participant.team.name }}: {{ participant.player.user.username }}</p>
-    {% empty %}
-        <p class="muted">No participant records for this legacy match.</p>
-    {% endfor %}
+<a class="back-link" href="{% url 'ladder:matches' %}">{% include "ladder/partials/icon.html" with name="chevron-left" %}Matches</a>
+
+<section class="card match-card match-hero reveal" aria-labelledby="match-heading">
+    <h1 id="match-heading" class="visually-hidden">{{ match.team_a.name }} vs {{ match.team_b.name }}</h1>
+    <header class="match-card-head">
+        <p class="eyebrow">{{ match.scheduled_starts_at|date:"l, F j" }}</p>
+        <p class="status-line">
+            <span class="badge {% if match.status == 'completed' %}badge-clay{% elif match.status == 'cancelled' %}badge-muted{% else %}badge-ink{% endif %}">{{ match.get_status_display }}</span>
+            {% if official_result %}{% elif status == "conflict" %}<span class="badge badge-red">Score review needed</span>{% elif status == "confirmed" %}<span class="badge badge-clay">Scores agreed</span>{% elif match.status == "scheduled" %}<span class="badge badge-muted">Awaiting scores</span>{% endif %}
+        </p>
+    </header>
+    <p class="match-time">{% include "ladder/partials/icon.html" with name="clock" %}{{ match.scheduled_starts_at|date:"g:i A" }} – {{ match.scheduled_ends_at|date:"g:i A" }}</p>
+
+    {% if official_result %}
+        <div class="official">
+            <h2 class="eyebrow scoreboard-title">Official score</h2>
+            <table class="scoreboard">
+                <thead><tr><th scope="col"><span class="visually-hidden">Team</span></th>{% for set in official_result.confirmed_from_submission.sets.all %}<th scope="col">{% if set.set_type == "match_tiebreak" %}TB{% else %}{{ set.set_order }}{% endif %}</th>{% endfor %}</tr></thead>
+                <tbody>
+                    <tr class="{% if official_result.winning_team_id == match.team_a_id %}winner{% else %}loser{% endif %}">
+                        <th scope="row"><span class="scoreboard-team">{{ match.team_a.name }}{% if official_result.winning_team_id == match.team_a_id %}<span class="winner-mark" aria-label="Winner">{% include "ladder/partials/icon.html" with name="check" %}</span>{% endif %}</span><span class="scoreboard-players">{% for participant in match.participants.all %}{% if participant.team_id == match.team_a_id %}<span>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</span>{% endif %}{% endfor %}</span></th>
+                        {% for set in official_result.confirmed_from_submission.sets.all %}<td{% if set.team_a_score > set.team_b_score %} class="set-won"{% endif %}>{{ set.team_a_score }}</td>{% endfor %}
+                    </tr>
+                    <tr class="{% if official_result.winning_team_id == match.team_b_id %}winner{% else %}loser{% endif %}">
+                        <th scope="row"><span class="scoreboard-team">{{ match.team_b.name }}{% if official_result.winning_team_id == match.team_b_id %}<span class="winner-mark" aria-label="Winner">{% include "ladder/partials/icon.html" with name="check" %}</span>{% endif %}</span><span class="scoreboard-players">{% for participant in match.participants.all %}{% if participant.team_id == match.team_b_id %}<span>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</span>{% endif %}{% endfor %}</span></th>
+                        {% for set in official_result.confirmed_from_submission.sets.all %}<td{% if set.team_b_score > set.team_a_score %} class="set-won"{% endif %}>{{ set.team_b_score }}</td>{% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="versus-board">
+            <div class="side">
+                <h2>{{ match.team_a.name }}</h2>
+                <ul>{% for participant in match.participants.all %}{% if participant.team_id == match.team_a_id %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endif %}{% endfor %}</ul>
+            </div>
+            <span class="versus" aria-label="versus">vs</span>
+            <div class="side">
+                <h2>{{ match.team_b.name }}</h2>
+                <ul>{% for participant in match.participants.all %}{% if participant.team_id == match.team_b_id %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endif %}{% endfor %}</ul>
+            </div>
+            {% if not match.participants.all %}<p class="small legacy-note">No participant records for this legacy match.</p>{% endif %}
+        </div>
+    {% endif %}
+    <p class="match-note">{{ state_note }}</p>
 </section>
-{% if can_cancel %}
-    <section class="panel">
-        <h2>Match operations</h2>
-        <p class="muted">Any selected participant may cancel before a score is submitted.</p>
-        <a class="button danger" href="{% url 'ladder:cancel_match' match.id %}">Cancel match</a>
-    </section>
-{% endif %}
+
 {% if can_submit %}
-    <section class="panel" id="score-submission">
-        <h2>Submit Score</h2>
-        <details class="quiet-disclosure"><summary>Scoring rules</summary><p>Enter two regular sets. Add the third set only when it is a deciding match tie-break.</p></details>
-        {% if score_form.errors %}<div class="account-errors" role="alert">{{ score_form.errors }}</div>{% endif %}
-        <form method="post" action="{% url 'ladder:submit_score' match.id %}">
-            {% csrf_token %}
-            <fieldset class="score-fieldset">
-                <legend>Set 1</legend>
-                <div class="score-grid">
-                    <label>{{ match.team_a.name }} {{ score_form.set1_team_a }}</label>
-                    <label>{{ match.team_b.name }} {{ score_form.set1_team_b }}</label>
-                </div>
-            </fieldset>
-            <fieldset class="score-fieldset">
-                <legend>Set 2</legend>
-                <div class="score-grid">
-                    <label>{{ match.team_a.name }} {{ score_form.set2_team_a }}</label>
-                    <label>{{ match.team_b.name }} {{ score_form.set2_team_b }}</label>
-                </div>
-            </fieldset>
-            <fieldset class="score-fieldset">
-                <legend>Match tie-break</legend>
-                <div class="score-grid">
-                    <label>{{ match.team_a.name }} {{ score_form.set3_team_a }}</label>
-                    <label>{{ match.team_b.name }} {{ score_form.set3_team_b }}</label>
-                </div>
-            </fieldset>
-            <button type="submit">Submit score</button>
-        </form>
-    </section>
+<section class="card score-card reveal" id="score-submission" aria-labelledby="score-heading">
+    <header class="card-head">
+        <div>
+            <h2 id="score-heading" class="card-title">Enter the score</h2>
+            <p class="muted small">Both teams submit. Matching scores become official.</p>
+        </div>
+        {% include "ladder/partials/help.html" with label="Scoring rules" text="Best of three. Enter the first two sets (6-0 to 6-4, 7-5 or 7-6). If the sets are split, add the deciding match tie-break: first to 10, won by two." %}
+    </header>
+    {% if score_form.errors %}<div class="form-error" role="alert">{{ score_form.errors }}</div>{% endif %}
+    <form method="post" action="{% url 'ladder:submit_score' match.id %}" class="score-form" data-score-form>
+        {% csrf_token %}
+        <table class="score-entry">
+            <thead><tr><th scope="col"><span class="visually-hidden">Team</span></th><th scope="col">Set 1</th><th scope="col">Set 2</th><th scope="col" class="tb-col">Tie-break</th></tr></thead>
+            <tbody>
+                <tr>
+                    <th scope="row">{{ match.team_a.name }}</th>
+                    <td><label class="visually-hidden" for="{{ score_form.set1_team_a.id_for_label }}">{{ match.team_a.name }} set 1</label>{{ score_form.set1_team_a }}</td>
+                    <td><label class="visually-hidden" for="{{ score_form.set2_team_a.id_for_label }}">{{ match.team_a.name }} set 2</label>{{ score_form.set2_team_a }}</td>
+                    <td class="tb-col"><label class="visually-hidden" for="{{ score_form.set3_team_a.id_for_label }}">{{ match.team_a.name }} match tie-break</label>{{ score_form.set3_team_a }}</td>
+                </tr>
+                <tr>
+                    <th scope="row">{{ match.team_b.name }}</th>
+                    <td><label class="visually-hidden" for="{{ score_form.set1_team_b.id_for_label }}">{{ match.team_b.name }} set 1</label>{{ score_form.set1_team_b }}</td>
+                    <td><label class="visually-hidden" for="{{ score_form.set2_team_b.id_for_label }}">{{ match.team_b.name }} set 2</label>{{ score_form.set2_team_b }}</td>
+                    <td class="tb-col"><label class="visually-hidden" for="{{ score_form.set3_team_b.id_for_label }}">{{ match.team_b.name }} match tie-break</label>{{ score_form.set3_team_b }}</td>
+                </tr>
+            </tbody>
+        </table>
+        <p class="hint" data-tiebreak-hint>Leave the tie-break empty unless the first two sets are split.</p>
+        <button class="btn btn-primary btn-block" type="submit">Submit score</button>
+    </form>
+</section>
 {% endif %}
-</article>
+
+{% if can_cancel %}
+<details class="disclosure danger-zone">
+    <summary>Can’t play? {% include "ladder/partials/icon.html" with name="chevron-down" %}</summary>
+    <p class="muted small">Any selected player can cancel for all four players before a score is submitted.</p>
+    <a class="btn btn-danger btn-sm" href="{% url 'ladder:cancel_match' match.id %}">Cancel match</a>
+</details>
+{% endif %}
 {% endblock %}

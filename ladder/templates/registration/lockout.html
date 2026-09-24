@@ -1,13 +1,7 @@
-{% extends "registration/login.html" %}
-
-{% block title %}Login temporarily unavailable | BC Ladder{% endblock %}
-
-{% block content %}
-<section class="auth-layout">
-    <div class="auth-form-panel">
-        <h1>Too many<br><em>attempts.</em></h1>
-        <p>Login is temporarily unavailable for this account or network. Try again in one hour.</p>
-        <div class="auth-links"><a href="{% url 'ladder:password_reset' %}">Reset your password</a></div>
-    </div>
-</section>
+{% extends "registration/auth_base.html" %}
+{% block title %}Login temporarily unavailable | BC Tennis Ladder{% endblock %}
+{% block auth %}
+<h1>Too many attempts</h1>
+<p class="lede">Login is temporarily unavailable for this account or network. Try again in one hour.</p>
+<p class="auth-foot"><a class="text-link" href="{% url 'ladder:password_reset' %}">Reset your password</a></p>
 {% endblock %}

@@ -1,4 +1,38 @@
 {% extends "ladder/base.html" %}
-{% block title %}Play | BC Ladder{% endblock %}
-{% block main_class %}journey-shell{% endblock %}
-{% block content %}{% include "ladder/partials/play_shell.html" with active_section="matches" %}{% endblock %}
+{% load tz %}
+{% block title %}Matches | BC Tennis Ladder{% endblock %}
+{% block main_class %}play{% endblock %}
+{% block content %}
+{% include "ladder/partials/play_tabs.html" with active="matches" %}
+{% get_current_timezone as club_tz %}
+<section id="submit-score" class="reveal" aria-labelledby="history-heading">
+    <header class="section-head"><h1 id="history-heading" class="section-title">Your matches</h1><p class="muted small">Club time ({{ club_tz }})</p></header>
+    {% if match_cards %}
+        <ul class="card row-list history stagger">
+            {% for card in match_cards %}{% with match=card.match %}
+                <li class="row{% if card.can_submit %} needs-score{% endif %}">
+                    <time class="date-chip" datetime="{{ match.scheduled_starts_at|date:'c' }}"><span>{{ match.scheduled_starts_at|date:"D" }}</span><strong>{{ match.scheduled_starts_at|date:"M j" }}</strong></time>
+                    <span class="row-body">
+                        <a class="row-main" href="{% url 'ladder:match_detail' match.id %}"><strong>{{ match.team_a.name }} <span class="vs">vs</span> {{ match.team_b.name }}</strong><span class="visually-hidden">, {% if match.status == "scheduled" %}open scorecard{% else %}view match{% endif %}</span></a>
+                        <span class="muted small">{{ match.scheduled_starts_at|date:"g:i A" }} · {{ card.state_note }}</span>
+                    </span>
+                    {% if card.can_submit %}
+                        <a class="btn btn-primary btn-sm" href="{% url 'ladder:match_detail' match.id %}#score-submission">Enter score</a>
+                    {% else %}
+                        <span class="badge {% if match.status == 'completed' %}badge-clay{% elif match.status == 'cancelled' %}badge-muted{% else %}badge-ink{% endif %}">{{ match.get_status_display }}</span>
+                        {% include "ladder/partials/icon.html" with name="chevron-right" %}
+                    {% endif %}
+                </li>
+            {% endwith %}{% endfor %}
+        </ul>
+        {% include "ladder/partials/pagination.html" %}
+    {% else %}
+        <div class="card empty">
+            <span class="empty-icon">{% include "ladder/partials/icon.html" with name="play" %}</span>
+            <p><strong>No matches yet.</strong></p>
+            <p class="muted">Accepted requests become matches here.</p>
+            <a class="btn btn-quiet" href="{% url 'ladder:suggestions' %}">Find a match</a>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

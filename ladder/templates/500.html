@@ -1,3 +1,11 @@
 {% extends "ladder/base.html" %}
-{% block title %}Something went wrong | BC Ladder{% endblock %}
-{% block content %}<h1>Something went wrong</h1><p>We could not complete this request. Please try again later. Check your match state before repeating an action.</p><a href="{% url 'ladder:dashboard' %}">Return to your dashboard</a>{% endblock %}
+{% block title %}Something went wrong | BC Tennis Ladder{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="error-page reveal">
+    <p class="error-code">500</p>
+    <h1>Something went wrong</h1>
+    <p class="lede">We could not complete this request. Please try again later. Check your match state before repeating an action.</p>
+    <a class="btn btn-primary" href="{% url 'ladder:dashboard' %}">Return home</a>
+</section>
+{% endblock %}

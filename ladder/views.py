@@ -271,7 +271,7 @@ def _suggestion_empty_state(profile, team, interval, options):
 
 
 def _lineup_label(players):
-    return " / ".join(player.user.username for player in players)
+    return " & ".join(player.user.get_full_name() or player.user.username for player in players)
 
 
 def _suggestion_cards(suggestions, profile, team):

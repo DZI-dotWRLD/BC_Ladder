@@ -1,0 +1,17 @@
+{% extends "ladder/base.html" %}
+{% load static %}
+{% block body_class %}auth-body{% endblock %}
+{% block main_class %}auth{% endblock %}
+{% block content %}
+<div class="auth-layout">
+    <aside class="auth-art" aria-hidden="true">
+        {% include "ladder/partials/banner_img.html" with name="harbor-sailboats" %}
+        <div class="auth-art-caption"><p>Doubles on the harbor.<br><em>The members’ ladder.</em></p></div>
+    </aside>
+    <section class="auth-panel">
+        <div class="auth-card reveal">
+            {% block auth %}{% endblock %}
+        </div>
+    </section>
+</div>
+{% endblock %}

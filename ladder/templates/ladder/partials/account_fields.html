@@ -1,9 +1,0 @@
-{% if form.non_field_errors %}<div class="account-errors" role="alert">{{ form.non_field_errors }}</div>{% endif %}
-{% for field in form %}
-<div class="account-field">
-    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
-    {{ field }}
-    {% if field.errors %}<div class="account-errors" id="{{ field.auto_id }}_error" role="alert">{{ field.errors }}</div>{% endif %}
-    {% if field.help_text %}<details class="form-help"><summary>{{ field.label }} guidance</summary><div id="{{ field.auto_id }}_helptext">{{ field.help_text|safe }}</div></details>{% endif %}
-</div>
-{% endfor %}

@@ -1,11 +1,7 @@
-{% extends "ladder/base.html" %}
-
-{% block title %}Verification link unavailable | BC Ladder{% endblock %}
-
-{% block content %}
-<section class="panel">
-    <h1>This verification link is no longer valid</h1>
-    <p>It may have expired or already been used.</p>
-    <p><a href="{% url 'ladder:verification_sent' %}">Request another verification link</a></p>
-</section>
+{% extends "registration/auth_base.html" %}
+{% block title %}Verification link unavailable | BC Tennis Ladder{% endblock %}
+{% block auth %}
+<h1>This verification link is no longer valid</h1>
+<p class="lede">It may have expired or already been used.</p>
+<p class="auth-foot"><a class="text-link" href="{% url 'ladder:verification_sent' %}">Request another verification link</a></p>
 {% endblock %}

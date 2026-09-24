@@ -22,6 +22,8 @@ from ladder.registration import EMAIL_CONFLICT, RegistrationConflict, register_p
 
 def payload(username="new-player", email="player@example.com"):
     return {
+        "first_name": "New",
+        "last_name": "Player",
         "username": username,
         "email": email,
         "gender": "male",
