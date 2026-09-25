@@ -5,7 +5,17 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import Match, MatchParticipant, MatchResultSubmission, PlayerProfile, Team, TeamMembership
+from .models import (
+    LadderStanding,
+    Match,
+    MatchParticipant,
+    MatchResultSubmission,
+    MatchSuggestion,
+    PlayerProfile,
+    SuggestionParticipant,
+    Team,
+    TeamMembership,
+)
 from .services import StaleState, submit_match_result
 
 
@@ -185,3 +195,80 @@ class NextMatchTests(TestCase):
         Match.objects.filter(pk=playing.pk).update(scheduled_ends_at=timezone.now() - timedelta(minutes=1))
         _response, next_match, _in_progress = self.next_match()
         self.assertNotEqual(next_match, playing)
+
+
+class OwnTeamFirstTests(TestCase):
+    """Match and request cards name the viewer's own team first, even when it is stored as team B."""
+
+    def setUp(self):
+        MatchSectionTests.setUp(self)
+        self.opponent_player = PlayerProfile.objects.create(
+            user=get_user_model().objects.create_user(username="opponent"),
+            gender=PlayerProfile.GENDER_MALE,
+        )
+        TeamMembership.objects.create(player=self.opponent_player, team=self.opponent, effective_from=timezone.now())
+
+    def make_away_match(self, selected=True):
+        starts_at = timezone.now() + timedelta(days=2)
+        match = Match.objects.create(
+            team_a=self.opponent,
+            team_b=self.team,
+            scheduled_week_start_date=starts_at.date(),
+            scheduled_day_of_week="Monday",
+            scheduled_start_time="18:00",
+            scheduled_end_time="20:00",
+            scheduled_starts_at=starts_at,
+            scheduled_ends_at=starts_at + timedelta(hours=2),
+        )
+        MatchParticipant.objects.create(match=match, team=self.opponent, player=self.opponent_player, side="a", lineup_order=1)
+        if selected:
+            MatchParticipant.objects.create(match=match, team=self.team, player=self.player, side="b", lineup_order=1)
+        return match
+
+    def test_match_row_names_own_team_first_for_both_sides(self):
+        self.make_away_match()
+        response = self.client.get(reverse("ladder:matches"))
+        self.assertContains(response, 'Home <span class="vs">vs</span> Away', html=False)
+
+        self.client.force_login(self.opponent_player.user)
+        response = self.client.get(reverse("ladder:matches"))
+        self.assertContains(response, 'Away <span class="vs">vs</span> Home', html=False)
+
+    def test_non_selected_teammate_sees_own_team_first(self):
+        self.make_away_match(selected=False)
+        card = self.client.get(reverse("ladder:matches")).context["open_cards"][0]
+        self.assertEqual((card["first_team"], card["second_team"]), (self.team, self.opponent))
+
+    def test_next_match_card_puts_own_side_first(self):
+        self.make_away_match()
+        sides = self.client.get(reverse("ladder:dashboard")).context["next_match_sides"]
+        self.assertEqual([side["team"] for side in sides], [self.team, self.opponent])
+        self.assertEqual([item.player for item in sides[0]["players"]], [self.player])
+
+    def test_request_card_puts_own_team_and_lineup_first(self):
+        starts_at = timezone.now() + timedelta(days=3)
+        suggestion = MatchSuggestion.objects.create(
+            team_a=self.opponent,
+            team_b=self.team,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(hours=2),
+            expires_at=starts_at,
+        )
+        SuggestionParticipant.objects.create(
+            suggestion=suggestion, team=self.opponent, player=self.opponent_player, side=SuggestionParticipant.SIDE_A, lineup_order=1
+        )
+        SuggestionParticipant.objects.create(
+            suggestion=suggestion, team=self.team, player=self.player, side=SuggestionParticipant.SIDE_B, lineup_order=1
+        )
+        card = self.client.get(reverse("ladder:suggestions")).context["existing_cards"][0]
+        self.assertEqual((card["first_team"], card["second_team"]), (self.team, self.opponent))
+        self.assertIn("selected", card["first_lineup"])
+        self.assertIn("opponent", card["second_lineup"])
+
+    def test_ladder_marks_only_own_team(self):
+        LadderStanding.objects.create(team=self.team, position=1)
+        LadderStanding.objects.create(team=self.opponent, position=2)
+        response = self.client.get(reverse("ladder:ladder", args=["mens"]))
+        self.assertEqual(response.context["own_team_id"], self.team.id)
+        self.assertContains(response, 'own-team"', count=1)
+        self.assertContains(response, 'aria-current="true"', count=1)

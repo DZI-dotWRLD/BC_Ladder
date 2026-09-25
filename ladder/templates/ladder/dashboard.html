@@ -21,15 +21,13 @@
             <h2 id="next-match-heading" class="match-date">{{ next_match.scheduled_starts_at|date:"l, F j" }}</h2>
             <p class="match-time">{% include "ladder/partials/icon.html" with name="clock" %}{{ next_match.scheduled_starts_at|date:"g:i A" }} – {{ next_match.scheduled_ends_at|date:"g:i A" }}</p>
             <div class="versus-board">
+                {% for side in next_match_sides %}
+                {% if not forloop.first %}<span class="versus" aria-label="versus">vs</span>{% endif %}
                 <div class="side">
-                    <h3>{{ next_match.team_a.name }}</h3>
-                    <ul>{% for participant in next_match_team_a_players %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endfor %}</ul>
+                    <h3>{{ side.team.name }}</h3>
+                    <ul>{% for participant in side.players %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endfor %}</ul>
                 </div>
-                <span class="versus" aria-label="versus">vs</span>
-                <div class="side">
-                    <h3>{{ next_match.team_b.name }}</h3>
-                    <ul>{% for participant in next_match_team_b_players %}<li>{{ participant.player.user.get_full_name|default:participant.player.user.username }}</li>{% endfor %}</ul>
-                </div>
+                {% endfor %}
             </div>
             <footer class="card-actions"><a class="btn btn-light" href="{% url 'ladder:match_detail' next_match.id %}">View match {% include "ladder/partials/icon.html" with name="arrow-right" %}</a></footer>
         {% else %}

@@ -159,9 +159,18 @@ def _participant_match_queryset(profile):
     )
 
 
+def _own_side_first(side_a, side_b, own_team_id, team_b_id):
+    """Order a pair of team-a/team-b values so the viewer's own team comes first."""
+    if own_team_id is not None and own_team_id == team_b_id:
+        return side_b, side_a
+    return side_a, side_b
+
+
 def _match_presentation(match, profile):
     participants = list(match.participants.all())
     own_participant = next((item for item in participants if item.player_id == profile.id), None)
+    own_team_id = own_participant.team_id if own_participant else getattr(match, "own_team_id", None)
+    first_team, second_team = _own_side_first(match.team_a, match.team_b, own_team_id, match.team_b_id)
     submissions = list(match.result_submissions.all())
     own_submission = next((item for item in submissions if own_participant and item.submitting_team_id == own_participant.team_id), None)
     official = getattr(match, "confirmed_result", None)
@@ -188,7 +197,15 @@ def _match_presentation(match, profile):
         note = "Opponent score received. Your team needs to submit its score."
     else:
         note = "Your team needs to submit its score after playing."
-    return {"match": match, "can_submit": can_submit, "state_note": note, "own_submission": own_submission, "official_result": official}
+    return {
+        "match": match,
+        "first_team": first_team,
+        "second_team": second_team,
+        "can_submit": can_submit,
+        "state_note": note,
+        "own_submission": own_submission,
+        "official_result": official,
+    }
 
 
 def _setup_steps_for_profile(profile, team, active_availability_count, suggestion_count, match_count):
@@ -346,11 +363,20 @@ def _suggestion_cards(suggestions, profile, team):
         else:
             state_note = "Waiting for both teams to accept."
 
+        first_team, second_team = _own_side_first(suggestion.team_a, suggestion.team_b, team.id, suggestion.team_b_id)
+        first_lineup, second_lineup = _own_side_first(
+            _lineup_label(players_by_side[SuggestionParticipant.SIDE_A]),
+            _lineup_label(players_by_side[SuggestionParticipant.SIDE_B]),
+            team.id,
+            suggestion.team_b_id,
+        )
         cards.append(
             {
                 "suggestion": suggestion,
-                "team_a_lineup": _lineup_label(players_by_side[SuggestionParticipant.SIDE_A]),
-                "team_b_lineup": _lineup_label(players_by_side[SuggestionParticipant.SIDE_B]),
+                "first_team": first_team,
+                "second_team": second_team,
+                "first_lineup": first_lineup,
+                "second_lineup": second_lineup,
                 "can_accept": can_accept,
                 "is_open": is_open,
                 "state_note": state_note,
@@ -455,8 +481,16 @@ def dashboard(request):
         next_match.participants.all() if next_match else [],
         key=lambda participant: (participant.side, participant.lineup_order, participant.id),
     )
-    team_a_players = [participant for participant in match_participants if participant.side == "a"]
-    team_b_players = [participant for participant in match_participants if participant.side == "b"]
+    next_match_sides = []
+    if next_match:
+        own_participant = next((item for item in match_participants if item.player_id == profile.id), None)
+        own_team_id = own_participant.team_id if own_participant else (team.id if team else None)
+        next_match_sides = _own_side_first(
+            {"team": next_match.team_a, "players": [item for item in match_participants if item.side == "a"]},
+            {"team": next_match.team_b, "players": [item for item in match_participants if item.side == "b"]},
+            own_team_id,
+            next_match.team_b_id,
+        )
     standing = LadderStanding.objects.filter(team=team).first() if team else None
     if team:
         open_statuses = [MatchSuggestion.STATUS_PROPOSED, MatchSuggestion.STATUS_PARTIALLY_ACCEPTED]
@@ -490,8 +524,7 @@ def dashboard(request):
             "suggestions": suggestions_qs,
             "next_match": next_match,
             "next_match_in_progress": next_match_in_progress,
-            "next_match_team_a_players": team_a_players,
-            "next_match_team_b_players": team_b_players,
+            "next_match_sides": next_match_sides,
             "standing": standing,
             "setup_steps": setup_steps,
             "needs_setup": needs_setup,
@@ -837,4 +870,9 @@ def ladder(request, division):
         .select_related("team")
         .order_by("-points", "-wins", "losses", "team__name", "team_id")
     )
-    return render(request, "ladder/ladder.html", {"division": division, "standings": standings})
+    own_team_id = (
+        TeamMembership.objects.filter(player__user=request.user, status=TeamMembership.STATUS_ACTIVE)
+        .values_list("team_id", flat=True)
+        .first()
+    )
+    return render(request, "ladder/ladder.html", {"division": division, "standings": standings, "own_team_id": own_team_id})

@@ -17,7 +17,7 @@
         <thead><tr><th scope="col" class="col-rank">Rank</th><th scope="col">Team</th><th scope="col" class="num col-played">Played</th><th scope="col" class="num">W</th><th scope="col" class="num">L</th><th scope="col" class="num col-points">Points</th></tr></thead>
         <tbody class="stagger">
         {% for standing in standings %}
-            <tr{% if forloop.counter <= 3 %} class="podium"{% endif %}>
+            <tr class="{% if forloop.counter <= 3 %}podium{% endif %}{% if standing.team_id == own_team_id %} own-team{% endif %}"{% if standing.team_id == own_team_id %} aria-current="true"{% endif %}>
                 <td class="col-rank"><span class="rank-num">{{ forloop.counter }}</span></td>
                 <th scope="row">{{ standing.team.name }}</th>
                 <td class="num col-played">{{ standing.matches_played }}</td>

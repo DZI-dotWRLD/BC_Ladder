@@ -63,8 +63,8 @@
             <li class="card request" id="request-{{ suggestion.id }}">
                 <div class="request-main">
                     <p class="eyebrow">{{ suggestion.starts_at|date:"l, M j" }} · {{ suggestion.starts_at|date:"g:i A" }} – {{ suggestion.ends_at|date:"g:i A" }}</p>
-                    <h3>{{ suggestion.team_a.name }} <span class="vs">vs</span> {{ suggestion.team_b.name }}</h3>
-                    <p class="lineup-line">{{ card.team_a_lineup }} <span class="vs">vs</span> {{ card.team_b_lineup }}</p>
+                    <h3>{{ card.first_team.name }} <span class="vs">vs</span> {{ card.second_team.name }}</h3>
+                    <p class="lineup-line">{{ card.first_lineup }} <span class="vs">vs</span> {{ card.second_lineup }}</p>
                     <p class="state">{% include "ladder/partials/icon.html" with name="clock" %}{{ card.state_note }}</p>
                 </div>
                 <div class="request-action">
@@ -80,7 +80,7 @@
             <summary>Closed requests {% include "ladder/partials/icon.html" with name="chevron-down" %}</summary>
             <ul class="closed-list">
                 {% for card in existing_cards %}{% if not card.is_open %}
-                    <li><span><strong>{{ card.suggestion.team_a.name }} vs {{ card.suggestion.team_b.name }}</strong><span class="muted">{{ card.suggestion.starts_at|date:"M j, Y" }}</span></span><span class="muted small">{{ card.state_note }}</span></li>
+                    <li><span><strong>{{ card.first_team.name }} vs {{ card.second_team.name }}</strong><span class="muted">{{ card.suggestion.starts_at|date:"M j, Y" }}</span></span><span class="muted small">{{ card.state_note }}</span></li>
                 {% endif %}{% endfor %}
             </ul>
         </details>

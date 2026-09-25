@@ -476,8 +476,14 @@ input[type="datetime-local"] { font-variant-numeric: lining-nums tabular-nums; }
 .standings thead th { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .standings .num { text-align: right; font-variant-numeric: lining-nums tabular-nums; }
 .standings tbody th { font-weight: 600; overflow-wrap: anywhere; }
-.standings tbody tr { transition: background-color .2s var(--ease); }
-.standings tbody tr:hover { background: var(--paper); }
+/* Separate borders let a shaded row round its ends; the shaded row hides its own divider. */
+.standings table { border-collapse: separate; border-spacing: 0; }
+.standings tbody tr > * { transition: background-color .2s var(--ease), border-color .2s var(--ease); }
+.standings tbody tr:hover > * { background: var(--paper); }
+.standings tbody tr.own-team > * { background: color-mix(in srgb, var(--paper) 70%, var(--paper-deep)); }
+.standings tbody tr:is(:hover, .own-team) > * { border-bottom-color: transparent; }
+.standings tbody tr:is(:hover, .own-team) > :first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.standings tbody tr:is(:hover, .own-team) > :last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .rank-num { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; font-weight: 600; font-size: 1.15rem; line-height: 1; font-family: var(--font-serif); font-variant-numeric: lining-nums proportional-nums; }
 .podium .rank-num { background: var(--ink); color: #fff; }
 .podium:first-child .rank-num { background: var(--red); }
